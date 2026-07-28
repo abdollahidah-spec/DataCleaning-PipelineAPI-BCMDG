@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+.data_clean/
+
+# Env / secrets
+.env
+
+# Local run artifacts
+e11_rdcc/outputs/
+e11_rdcc/state/
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

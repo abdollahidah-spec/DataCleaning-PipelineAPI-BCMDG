@@ -1,0 +1,10 @@
+pandas
+xlsxwriter
+openpyxl
+pyyaml
+python-dotenv
+sqlalchemy
+pyodbc
+anthropic
+msal
+requests

@@ -1,0 +1,102 @@
+# e11_rdcc/config/E11_RDCC.yaml
+# Config complète de la pipeline E11_RDCC — fusionnée avec shared/config_base.yaml.
+# À lancer depuis la racine du repo (chemins relatifs ci-dessous résolus depuis là).
+
+api_id: "E11_RDCC"
+
+input:
+  type: "sqlserver"
+  table_name: "E11EtatBcmReleveDesComptesCorrespondants"
+  dt_cr_column: "dtCr"
+
+load:
+  mode: "auto"   # auto | initial | incremental
+  # Lancer `--mode initial` manuellement une première fois AVANT d'activer le
+  # Task Scheduler, pour que le premier run automatisé du lundi soit un vrai
+  # Incremental Load (voir shared/state_store.py).
+
+columns:
+  ref_banque: "RefBanque"
+
+outlier_tag: "OUTLIER"
+
+# RÈGLE NA (appliquée à chaque champ catégoriel, shared/na_rule.py::apply_na_rule) :
+#   field == 'NA'  ET  ref_transaction == 'NA'   -> 'NA'   (ligne "sans activité" légitime)
+#   field == 'NA'  ET  ref_transaction != 'NA'   -> OUTLIER (NA suspecte, partielle)
+# `columns.ref_transaction` désigne la colonne "témoin" comparée au champ pour trancher.
+# Pour E11_RDCC, ce témoin est NumCompte (numéro de compte) — c'est lui qui, avec
+# RefBanque et Devise, identifie une ligne "sans activité" dans l'exemple du ticket
+# ({"nomCorrespondant":"NA","numCompte":"NA","devise":"NA", ...}). D'où le même
+# ref_transaction: "NumCompte" pour NomCorrespondant ET Devise ci-dessous.
+fields:
+  - name: "NomCorrespondant"
+    type: "categorical"
+    columns:
+      field: "NomCorrespondant"
+      field_out: "NomCorrespondant_Normalisé"
+      ref_transaction: "NumCompte"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e11_rdcc/referentiel/nomcorrespondant_referentiel_E11.json"
+    llm:
+      model: "claude-sonnet-5"
+      batch_size: 20
+      max_retry: 3
+      retry_wait: 2
+
+  - name: "Devise"
+    type: "categorical"
+    columns:
+      field: "Devise"
+      field_out: "Devise_Normalisée"
+      ref_transaction: "NumCompte"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e11_rdcc/referentiel/devise_referentiel.json"
+
+  - name: "SoldesRDCC"
+    type: "numeric_coherence"
+    columns:
+      solde_debut: "SoldeDebutJournee"
+      mvts_debiteurs: "TotalMvtsDebiteursJournee"
+      mvts_crediteurs: "TotalMvtsCrediteurs"
+      solde_fin: "SoldeFinJournee"
+      date_fin: "DateFinJournee"
+      dt_cr: "dtCr"
+      ref_banque: "RefBanque"
+      nom_correspondant: "NomCorrespondant"
+      devise: "Devise"
+      num_compte: "NumCompte"                        # référence de transaction/compte
+    # Noms de colonnes ci-dessus confirmés exacts par le métier (2026-07-28).
+    tolerance:
+      absolute: 0.01                                 # TODO-VALIDATE avec le métier
+    # Clé de groupement pour la continuité temporelle (règle 2) : regroupée par compte
+    # (RefBanque + NumCompte) maintenant que NumCompte est confirmé comme référence de
+    # transaction — remplace l'ancien placeholder [RefBanque, NomCorrespondant, Devise]
+    # (moins précis : un même correspondant/devise peut correspondre à plusieurs comptes).
+    # ⚠ à valider avec le métier avant la mise en prod définitive.
+    grouping_key_temporal_continuity:
+      - "RefBanque"
+      - "NumCompte"
+    outlier_tag: "OUTLIER"
+
+output:
+  local_dir: "e11_rdcc/outputs/"
+  # Chemin stable (écrasé à chaque run) — contient les feuilles de classification par
+  # champ + Anomalies_Numeriques + Instructions. Plus d'extraction ligne par ligne ni de
+  # chemin historisé daté (abandonnés sur demande métier). Stocké localement dans
+  # local_dir (ou sous OUTPUT_BASE si défini, voir .env) ET/OU sur SharePoint si configuré.
+  classification_path: "PowerBI/E11_RDCC/E11_RDCC_classification.xlsx"
+
+instructions:
+  prefill: true
+
+email:
+  enabled: true
+  attach_workbook_max_mb: 15
+
+schedule:   # métadonnées uniquement — non lues par le pipeline, documente l'intention Task Scheduler
+  frequency: "weekly"
+  day: "monday"
+  time: "10:00"
+  timezone: "Africa/Nouakchott"

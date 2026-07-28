@@ -1,0 +1,27 @@
+# shared/config_base.yaml
+# Config commune à toutes les APIs — chaque config/{API}.yaml surcharge uniquement
+# ce qui change (fusion profonde, voir shared/config.py::load_config).
+
+pipeline_version: "1.0.0"
+
+input:
+  type:     "sqlserver"
+  sep:      ";"
+  encoding: "utf-8-sig"
+  sheet:    0
+
+output:
+  format: "csv"
+
+llm:
+  model:       "claude-sonnet-5"
+  batch_size:  20
+  max_retry:   3
+  retry_wait:  2
+
+instructions:
+  prefill: true
+
+email:
+  enabled: true
+  attach_workbook_max_mb: 15
