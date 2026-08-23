@@ -134,10 +134,58 @@ class CategoricalFieldProcessor(FieldProcessor):
         self.save_warm_start_fn(api_id, corrections, False)
 
 
+# Méthodes signifiant "déjà connu AVANT ce run" (référentiel statique ou cache
+# warm-start déjà peuplé) — tout le reste (typiquement "CLAUDE"/"OUTLIER" seul)
+# signifie une valeur que le pipeline n'avait jamais eu à trancher auparavant,
+# résolue (ou non) pendant CE run — utilisé pour les indicateurs "nouvelles
+# valeurs" de l'email (delta), voir shared/quality_report.py.
+#
+# NIF_EXACT/PUBLIC_ENT/DGI_EXACT_NORM/DGI_FUZZY_STRONG (e08_ocd/fields/
+# nomdonneurordre.py, beneficiaire.py) : matches DÉTERMINISTES à confiance forte
+# contre une source statique (base fiscale DGI, liste d'entreprises publiques) —
+# même niveau de confiance que MAP, donc "déjà connu". PARTICULIER/ETS_PERSONNEL/
+# ETS_OUTLIER en sont volontairement EXCLUS : ce sont des déductions heuristiques
+# (mots-clés) sur une valeur jamais validée par un humain ni trouvée dans une
+# source de référence — plus proche en esprit de CLAUDE (une estimation, pas une
+# validation) que de MAP, donc classées "nouvelles" comme le reste.
+_KNOWN_BEFORE_RUN_METHODS = {
+    "WARM", "MAP", "NUM", "ALIAS", "STRIP", "NOISE",
+    "NIF_EXACT", "PUBLIC_ENT", "DGI_EXACT_NORM", "DGI_FUZZY_STRONG",
+}
+
+
 def _categorical_stats(df: pd.DataFrame, col_in: str, col_out: str, outlier_tag: str) -> dict:
     distinct_total = int(df[col_in].dropna().nunique())
     distinct_norm = int(df.loc[df[col_out] != outlier_tag, col_in].dropna().nunique())
     n_out = int((df[col_out] == outlier_tag).sum())
+
+    method_col = f"{col_in}_method"
+    outliers_by_method: dict = {}
+    distinct_outliers_by_method: dict = {}
+    n_new_distinct = n_new_normalized = n_new_outliers = 0
+
+    if method_col in df.columns:
+        # Décompose les outliers par méthode de résolution — distingue le bruit DÉJÀ
+        # CONNU du référentiel (method "NOISE" pour Devise, "MAP" pour un champ dont
+        # le référentiel mappe directement une valeur vers OUTLIER) des valeurs
+        # VRAIMENT nouvelles/non résolues. Un outlier "connu" n'est pas un problème
+        # à corriger, juste du bruit filtré (voir scripts/analyze_outliers.py).
+        if n_out:
+            outlier_rows = df[df[col_out] == outlier_tag]
+            outliers_by_method = {str(k): int(v) for k, v in outlier_rows[method_col].value_counts().items()}
+            distinct_outliers_by_method = {
+                str(m): int(sub[col_in].nunique()) for m, sub in outlier_rows.groupby(method_col)
+            }
+
+        # Indicateurs "nouvelles valeurs" (delta, pour l'email) : une valeur distincte
+        # est "nouvelle" si sa méthode de résolution n'est PAS une des méthodes
+        # "déjà connu avant ce run" (référentiel statique ou cache déjà peuplé).
+        unique_vals = df.drop_duplicates(subset=[col_in])[[col_in, col_out, method_col]]
+        is_new = ~unique_vals[method_col].isin(_KNOWN_BEFORE_RUN_METHODS)
+        n_new_distinct = int(is_new.sum())
+        n_new_normalized = int((is_new & (unique_vals[col_out] != outlier_tag)).sum())
+        n_new_outliers = int((is_new & (unique_vals[col_out] == outlier_tag)).sum())
+
     return {
         "n_rows": len(df),
         "n_distinct_total": distinct_total,
@@ -145,4 +193,9 @@ def _categorical_stats(df: pd.DataFrame, col_in: str, col_out: str, outlier_tag:
         "n_outlier_rows": n_out,
         "taux_normalisation_pct": round(100 * distinct_norm / max(distinct_total, 1), 2),
         "taux_outliers_pct": round(100 * n_out / max(len(df), 1), 2),
+        "outliers_by_method": outliers_by_method,                    # lignes, ex: {"NOISE": 1200, "OUTLIER": 340}
+        "distinct_outliers_by_method": distinct_outliers_by_method,  # valeurs distinctes
+        "n_new_distinct": n_new_distinct,        # nouvelles valeurs distinctes détectées ce run
+        "n_new_normalized": n_new_normalized,    # ... dont normalisées avec succès (ex: résolues par Claude)
+        "n_new_outliers": n_new_outliers,        # ... dont toujours en OUTLIER
     }

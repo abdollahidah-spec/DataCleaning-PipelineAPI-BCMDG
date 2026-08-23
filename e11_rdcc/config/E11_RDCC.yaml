@@ -24,17 +24,24 @@ outlier_tag: "OUTLIER"
 #   field == 'NA'  ET  ref_transaction == 'NA'   -> 'NA'   (ligne "sans activité" légitime)
 #   field == 'NA'  ET  ref_transaction != 'NA'   -> OUTLIER (NA suspecte, partielle)
 # `columns.ref_transaction` désigne la colonne "témoin" comparée au champ pour trancher.
-# Pour E11_RDCC, ce témoin est NumCompte (numéro de compte) — c'est lui qui, avec
-# RefBanque et Devise, identifie une ligne "sans activité" dans l'exemple du ticket
-# ({"nomCorrespondant":"NA","numCompte":"NA","devise":"NA", ...}). D'où le même
-# ref_transaction: "NumCompte" pour NomCorrespondant ET Devise ci-dessous.
+#
+# CORRECTIF BUSINESS ANALYST (test métier, 2026-08) : le témoin ne peut PAS être une
+# seule colonne (ex: NumCompte seul) — la non-activité légitime doit être vérifiée
+# GLOBALEMENT sur TOUT le gabarit du ticket en une seule fois :
+#   {"nomCorrespondant":"NA","numCompte":"NA","devise":"NA","soldeDebutJournee":0,
+#    "totalMvtsDebiteursJournee":0,"totalMvtsCrediteurs":0,"soldeFinJournee":0}
+# (dateFinJournee exclue, elle varie toujours). `ref_transaction` pointe donc vers
+# `_E11_GlobalNoActivite`, une colonne synthétique précalculée UNE SEULE FOIS pour
+# TOUS les champs (voir e11_rdcc/global_na.py + E11Pipeline.preprocess()), et NON
+# vers NumCompte directement — sinon NomCorrespondant/Devise chacun ne verraient
+# qu'un témoin partiel et pourraient déclarer "sans activité" à tort.
 fields:
   - name: "NomCorrespondant"
     type: "categorical"
     columns:
       field: "NomCorrespondant"
       field_out: "NomCorrespondant_Normalisé"
-      ref_transaction: "NumCompte"
+      ref_transaction: "_E11_GlobalNoActivite"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
     referentiel_path: "e11_rdcc/referentiel/nomcorrespondant_referentiel_E11.json"
@@ -49,7 +56,7 @@ fields:
     columns:
       field: "Devise"
       field_out: "Devise_Normalisée"
-      ref_transaction: "NumCompte"
+      ref_transaction: "_E11_GlobalNoActivite"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
     referentiel_path: "e11_rdcc/referentiel/devise_referentiel.json"
@@ -70,14 +77,13 @@ fields:
     # Noms de colonnes ci-dessus confirmés exacts par le métier (2026-07-28).
     tolerance:
       absolute: 0.01                                 # TODO-VALIDATE avec le métier
-    # Clé de groupement pour la continuité temporelle (règle 2) : regroupée par compte
-    # (RefBanque + NumCompte) maintenant que NumCompte est confirmé comme référence de
-    # transaction — remplace l'ancien placeholder [RefBanque, NomCorrespondant, Devise]
-    # (moins précis : un même correspondant/devise peut correspondre à plusieurs comptes).
-    # ⚠ à valider avec le métier avant la mise en prod définitive.
+    # Clé de groupement pour la continuité temporelle (règle 2) — CONFIRMÉE par le
+    # Business Analyst (test métier) : Banque + NomCorrespondant + NumCompte + Devise.
     grouping_key_temporal_continuity:
       - "RefBanque"
+      - "NomCorrespondant"
       - "NumCompte"
+      - "Devise"
     outlier_tag: "OUTLIER"
 
 output:
@@ -94,6 +100,9 @@ instructions:
 email:
   enabled: true
   attach_workbook_max_mb: 15
+  # Libellé utilisé tel quel dans le sujet/corps de l'email (gabarit validé par le
+  # Business Analyst) — ex: "Pipeline E11 – RDCC : Rapport de qualité ...".
+  display_name: "E11 – RDCC"
 
 schedule:   # métadonnées uniquement — non lues par le pipeline, documente l'intention Task Scheduler
   frequency: "weekly"

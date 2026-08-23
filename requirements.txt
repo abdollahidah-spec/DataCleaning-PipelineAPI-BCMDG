@@ -8,3 +8,10 @@ pyodbc
 anthropic
 msal
 requests
+markdown
+xhtml2pdf
+rapidfuzz
+pycountry
+babel
+geonamescache
+numpy

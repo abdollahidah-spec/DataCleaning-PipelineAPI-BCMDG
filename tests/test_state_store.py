@@ -16,7 +16,7 @@ def test_state_dir_treats_empty_string_as_unset(monkeypatch):
     """Bug réel trouvé en prod : STATE_DIR="" présente-mais-vide dans .env doit se
     comporter comme si la variable était absente, pas comme un chemin "" (= CWD)."""
     monkeypatch.setenv("STATE_DIR", "")
-    assert _state_dir() == Path("e11_rdcc/state")
+    assert _state_dir() == Path("state")
 
 
 def test_state_dir_uses_explicit_value_when_set(monkeypatch, tmp_path):

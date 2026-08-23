@@ -33,12 +33,16 @@ def main() -> int:
                          help="Traite normalement mais n'envoie ni SharePoint ni email (logge l'intention)")
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
-    pipeline = E11Pipeline(cfg)
-
     try:
+        cfg = load_config(args.config)
+        pipeline = E11Pipeline(cfg, config_source=args.config)
         result = pipeline.run(mode=args.mode, override_input=args.input, dry_run=args.dry_run)
     except Exception as exc:
+        # Couvre aussi les erreurs de chargement/validation de config (YAML
+        # invalide, clé manquante...) — avant, seul pipeline.run() était protégé,
+        # donc une ConfigError levée à la construction du pipeline (avant même le
+        # premier accès aux données) affichait une trace Python brute au lieu du
+        # message clair attendu.
         print(f"ERREUR : {exc}", file=sys.stderr)
         return 1
 

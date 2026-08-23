@@ -14,6 +14,15 @@ from typing import Optional
 import pandas as pd
 
 
+def format_duration_mmss(seconds: float) -> str:
+    """"XX min XX s" — format humain unique, réutilisé par les logs, l'email et
+    les rapports PDF (shared/email_notifier.py, e11_rdcc/reports.py) pour qu'une
+    même durée s'affiche toujours de la même façon, sans calcul à refaire."""
+    total = max(int(round(seconds)), 0)
+    m, s = divmod(total, 60)
+    return f"{m:02d} min {s:02d} s"
+
+
 @dataclass
 class QualityReport:
     api_id: str
@@ -35,39 +44,30 @@ class QualityReport:
     def execution_time_seconds(self) -> float:
         return (self.finished_at - self.started_at).total_seconds()
 
-    def to_html_summary(self) -> str:
-        by_champ = "".join(
-            f"<tr><td>{c}</td><td>{n:,}</td><td>{round(100*n/max(self.n_rows,1),2)}%</td></tr>"
-            for c, n in sorted(self.outliers_by_champ.items(), key=lambda kv: -kv[1])
-        )
-        by_banque = "".join(f"<tr><td>{b}</td><td>{n}</td></tr>" for b, n in self.outliers_by_refbanque.items())
-        return f"""
-        <h3>{self.api_id} — {self.mode}</h3>
-        <table border="1" cellpadding="4" cellspacing="0">
-          <tr><td>Lignes traitées</td><td>{self.n_rows:,}</td></tr>
-          <tr><td>Taux conformité (global, tous champs confondus)</td><td>{self.taux_conformite_pct}%</td></tr>
-          <tr><td>Taux normalisation (champs catégoriels)</td><td>{self.taux_normalisation_pct}%</td></tr>
-          <tr><td>Taux outliers (global, tous champs confondus)</td><td>{self.taux_outliers_pct}%</td></tr>
-          <tr><td>Temps d'exécution</td><td>{self.execution_time_seconds:.1f}s</td></tr>
-        </table>
-        <h4>Détail par champ / règle (% du total de lignes)</h4>
-        <table border="1" cellpadding="4" cellspacing="0">
-          <tr><th>Champ / règle</th><th>Lignes</th><th>%</th></tr>
-          {by_champ}
-        </table>
-        <h4>Outliers par RefBanque</h4>
-        <table border="1" cellpadding="4" cellspacing="0">{by_banque}</table>
-        """
-
     def to_log_lines(self) -> list[str]:
+        # Repère, par champ catégoriel, quelles méthodes correspondent à du bruit DÉJÀ
+        # CONNU du référentiel (pas un problème) vs une valeur VRAIMENT nouvelle/non
+        # résolue (à examiner) — voir shared/field_processor.py::_categorical_stats.
+        _KNOWN_NOISE_METHODS = {"NOISE", "MAP"}   # référentiel mappe déjà explicitement -> OUTLIER
+
         lines = [
-            f"api_id={self.api_id} mode={self.mode} duration={self.execution_time_seconds:.1f}s "
-            f"rows={self.n_rows} conformite={self.taux_conformite_pct}% (global, tous champs confondus) "
-            f"normalisation={self.taux_normalisation_pct}% outliers={self.taux_outliers_pct}% (global)",
+            f"Lignes traitées : {self.n_rows}",
+            f"Taux de conformité (global, tous champs confondus) : {self.taux_conformite_pct}%",
+            f"Taux de normalisation (champs catégoriels) : {self.taux_normalisation_pct}%",
+            f"Taux d'outliers (global, tous champs confondus) : {self.taux_outliers_pct}%",
         ]
         for champ, n in sorted(self.outliers_by_champ.items(), key=lambda kv: -kv[1]):
             pct = round(100 * n / max(self.n_rows, 1), 2)
             lines.append(f"  [{champ}] {n:,} lignes ({pct}% du total)")
+            by_method = self.per_field_stats.get(champ, {}).get("distinct_outliers_by_method", {})
+            if by_method:
+                known = sum(v for m, v in by_method.items() if m in _KNOWN_NOISE_METHODS)
+                nouveau = sum(v for m, v in by_method.items() if m not in _KNOWN_NOISE_METHODS)
+                detail = ", ".join(f"{m}={v}" for m, v in sorted(by_method.items(), key=lambda kv: -kv[1]))
+                lines.append(
+                    f"    valeurs distinctes en outlier : {known} déjà connues (référentiel, pas un "
+                    f"problème) / {nouveau} nouvelles ou non résolues (à examiner) — détail : {detail}"
+                )
         for w in self.warnings:
             lines.append(f"WARNING: {w}")
         for e in self.errors:
@@ -100,12 +100,16 @@ def compute_quality_report(
         outliers_by_champ[name] = int(mask.sum())
         is_outlier_row = is_outlier_row | mask
 
-    # Cohérence numérique : "_NC_row_conforme" (aligné sur l'index d'origine, posé par
-    # NumericCoherenceProcessor) est la source de vérité pour incorporer ces anomalies
-    # dans la conformité globale — le long-form numeric_anomalies_df ne porte pas
-    # l'index d'origine et ne peut pas être OR-é directement sur is_outlier_row.
-    if "_NC_row_conforme" in df_final.columns:
-        is_outlier_row = is_outlier_row | (~df_final["_NC_row_conforme"].astype(bool))
+    # Cohérence numérique : toute colonne synthétique nommée "*_row_conforme" (posée
+    # par un FieldProcessor non-catégoriel, ex: NumericCoherenceProcessor::_NC_row_conforme
+    # pour E11, EcheancesProcessor::_EC_row_conforme pour E09) est la source de vérité
+    # pour incorporer ses anomalies dans la conformité globale — le long-form
+    # numeric_anomalies_df ne porte pas l'index d'origine et ne peut pas être OR-é
+    # directement sur is_outlier_row. Convention générique (pas un nom d'API en dur) :
+    # plusieurs champs non-catégoriels peuvent chacun poser la leur, combinées en OR.
+    for col in df_final.columns:
+        if col.endswith("_row_conforme"):
+            is_outlier_row = is_outlier_row | (~df_final[col].astype(bool))
 
     if numeric_anomalies_df is not None and not numeric_anomalies_df.empty and "Rule" in numeric_anomalies_df.columns:
         error_only = numeric_anomalies_df[numeric_anomalies_df.get("Severity", "ERROR") == "ERROR"]

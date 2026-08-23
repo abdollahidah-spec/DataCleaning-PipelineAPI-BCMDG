@@ -13,9 +13,16 @@ venv/
 
 # Local run artifacts
 e11_rdcc/outputs/
-e11_rdcc/state/
+e09_pe/outputs/
+e08_ocd/outputs/
+state/
 logs/
 *.log
+
+# Fichiers de référence externes (données métier volumineuses/sensibles, pas du
+# code — base fiscale DGI, entreprises publiques — voir DGI_BASE_PATH/PUBLIC_ENT_PATH
+# dans .env.example ; même convention que l'ancien repo, DataCleaning-PipelineField-BCMDG)
+req/
 
 # OS
 .DS_Store

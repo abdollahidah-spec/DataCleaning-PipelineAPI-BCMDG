@@ -1,0 +1,166 @@
+# e08_ocd/config/E08_OCD.yaml
+# Config de la pipeline E08_OCD — fusionnée avec shared/config_base.yaml.
+# À lancer depuis la racine du repo (chemins relatifs ci-dessous résolus depuis là).
+#
+# 6 champs, tous catégoriels :
+#   Devise, NomCorrespondant, Produits — déterministe/référentiel + fallback Claude
+#     (mêmes patterns que E11_RDCC/E09_PE). Produits est NOUVEAU (référentiel
+#     construit depuis req/DataCleaning_E08 OCD_Produits.xlsx).
+#   NomDonneurOrdre — matching DGI (NIF exact, rapidfuzz, arbitrage Claude) +
+#     classification locale (particulier/ETS) + entreprises publiques.
+#   Beneficiaire — bénéficiaire ÉTRANGER (crédit documentaire import) : mêmes
+#     helpers que NomDonneurOrdre mais fallback Claude + recherche web (pas de
+#     base DGI pertinente pour une entité étrangère).
+#   Pays — référentiel pycountry/babel/geonamescache + alias manuels + mots-clés
+#     d'adresse, fallback Claude (bascule depuis Ollama/qwen2.5 de l'ancien repo,
+#     décision confirmée — voir e08_ocd/fields/pays.py).
+#
+# NomDonneurOrdre et Beneficiaire nécessitent DGI_BASE_PATH / PUBLIC_ENT_PATH
+# dans .env (fichiers externes, jamais en dur — voir .env.example).
+
+api_id: "E08_OCD"
+
+input:
+  type: "sqlserver"
+  table_name: "E8EtatBcmOuvertureCreditDocumentaires"
+  dt_cr_column: "dtCr"
+
+load:
+  mode: "auto"   # auto | initial | incremental
+  # Lancer `--mode initial` manuellement une première fois AVANT d'activer le
+  # Task Scheduler, pour que le premier run automatisé soit un vrai Incremental
+  # Load (voir shared/state_store.py).
+
+columns:
+  ref_banque: "RefBanque"
+
+outlier_tag: "OUTLIER"
+
+# RÈGLE NA (shared/na_rule.py::apply_na_rule) — témoin NumCredoc, comme dans
+# l'ancien repo (chaque champ catégoriel de E08_OCD utilisait déjà
+# ref_transaction: "NumCredoc" indépendamment) :
+#   Champ == 'NA' ET NumCredoc == 'NA' -> 'NA' (légitime)
+#   Champ == 'NA' ET NumCredoc != 'NA' -> OUTLIER (NA suspecte)
+# Pas de correctif "NA globale" façon E11 : rien dans l'historique métier d'E08
+# ne décrit un gabarit "sans activité" multi-champs à vérifier ensemble — à
+# revisiter si un ticket business le demande explicitement plus tard.
+fields:
+  - name: "Devise"
+    type: "categorical"
+    columns:
+      field: "Devise"
+      field_out: "Devise_Normalisée"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e08_ocd/referentiel/devise_referentiel.json"
+
+  - name: "NomCorrespondant"
+    type: "categorical"
+    columns:
+      field: "NomCorrespondant"
+      field_out: "NomCorrespondant_Normalisé"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e08_ocd/referentiel/nomcorrespondant_referentiel_E08.json"
+    llm:
+      model: "claude-sonnet-5"
+      batch_size: 20
+      max_retry: 3
+      retry_wait: 2
+
+  - name: "Produits"
+    type: "categorical"
+    columns:
+      field: "Produits"
+      field_out: "Produits_Normalisé"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e08_ocd/referentiel/produits_referentiel.json"
+    llm:
+      model: "claude-sonnet-5"
+      batch_size: 20
+      max_retry: 3
+      retry_wait: 2
+
+  - name: "NomDonneurOrdre"
+    type: "categorical"
+    columns:
+      field: "NomDonneurOrdre"
+      field_out: "NomDonneurOrdre_Normalisé"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+      nif_nni: "NifNni"                    # colonne NIF/NNI — matching DGI exact (optionnel : si absente, cette étape est juste sautée)
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e08_ocd/referentiel/nomdonneurordre_referentiel_E08.json"
+    # Seuils de matching DGI (identiques à l'ancien repo, ancien seuils déjà
+    # validés en prod pour E07/E08) :
+    matching:
+      strong_threshold: 92   # score rapidfuzz >= ce seuil ET écart net (strong_gap) avec le 2e -> match direct
+      strong_gap: 8
+      arbitrage_min: 70      # score < ce seuil -> aucun candidat plausible, pas d'appel Claude
+      batch_size: 300         # taille de lot pour le matching flou (mémoire bornée contre les ~52k raisons sociales DGI)
+    llm:
+      model: "claude-sonnet-5"
+      batch_size: 20          # taille de lot pour l'arbitrage Claude (candidats DGI ambigus)
+      max_retry: 3
+      retry_wait: 2
+
+  - name: "Beneficiaire"
+    type: "categorical"
+    columns:
+      field: "Beneficiaire"
+      field_out: "Beneficiaire_Normalisé"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e08_ocd/referentiel/beneficiaire_referentiel_E08.json"
+    llm:
+      model: "claude-sonnet-5"
+      batch_size: 5            # petits lots : chaque item déclenche sa propre recherche web
+      max_retry: 3
+      retry_wait: 2
+      web_search_max_uses: 3   # outil serveur Claude, facturé à l'usage — max recherches/valeur
+
+  - name: "Pays"
+    type: "categorical"
+    columns:
+      field: "Pays"
+      field_out: "Pays_Normalisé"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    # Pas de référentiel Excel BCM dédié — le référentiel EST le code
+    # (pycountry/babel/geonamescache + alias manuels, voir e08_ocd/fields/pays.py).
+    # Pointé ici vers les mots-clés d'adresse (fichier référentiel réellement
+    # utilisé par la cascade) pour satisfaire la validation de config générique.
+    referentiel_path: "e08_ocd/referentiel/pays_addr_keywords.json"
+    llm:
+      model: "claude-sonnet-5"
+      batch_size: 25
+      max_retry: 3
+      retry_wait: 2
+
+output:
+  local_dir: "e08_ocd/outputs/"
+  # Chemin stable (écrasé à chaque run) — une feuille de classification par champ
+  # + Instructions.
+  classification_path: "PowerBI/E08_OCD/E08_OCD_classification.xlsx"
+
+instructions:
+  prefill: true
+
+email:
+  enabled: true
+  attach_workbook_max_mb: 15
+  # Libellé utilisé tel quel dans le sujet/corps de l'email (même gabarit que
+  # E11/E09, validé par le Business Analyst) — ex: "Pipeline E08 – OCD : ...".
+  display_name: "E08 – OCD"
+
+schedule:   # métadonnées uniquement — non lues par le pipeline, documente l'intention Task Scheduler
+  frequency: "weekly"
+  day: "monday"
+  time: "10:00"
+  timezone: "Africa/Nouakchott"

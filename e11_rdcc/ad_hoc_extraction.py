@@ -59,7 +59,7 @@ def run_ad_hoc_extraction(
     output_path: Optional[str] = None,
 ) -> Path:
     cfg = load_config(config_path)
-    pipeline = E11Pipeline(cfg)
+    pipeline = E11Pipeline(cfg, config_source=config_path)
 
     if input_file:
         from shared.db_connector import load_file

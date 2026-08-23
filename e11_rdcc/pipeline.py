@@ -7,12 +7,15 @@ pour toute l'API (voir shared/base_api_pipeline.py pour l'orchestration généri
 """
 from __future__ import annotations
 
+import pandas as pd
+
 from shared.base_api_pipeline import BaseApiPipeline
 from shared.field_processor import FieldProcessor
 
 from e11_rdcc.fields.devise import build_devise_processor
 from e11_rdcc.fields.nomcorrespondant import build_nomcorrespondant_processor
 from e11_rdcc.fields.numeric_coherence import build_numeric_coherence_processor
+from e11_rdcc.global_na import GLOBAL_NA_COLUMN, compute_global_no_activity_column
 
 
 def build_e11_field_processors(cfg: dict) -> list:
@@ -45,3 +48,35 @@ def build_e11_field_processors(cfg: dict) -> list:
 class E11Pipeline(BaseApiPipeline):
     def _build_field_processors(self, cfg: dict) -> list[FieldProcessor]:
         return build_e11_field_processors(cfg)
+
+    def preprocess(self, df_raw: pd.DataFrame) -> pd.DataFrame:
+        """
+        Précalcule la colonne globale de non-activité (voir e11_rdcc/global_na.py)
+        AVANT que NomCorrespondant/Devise ne s'exécutent — ces deux champs pointent
+        leur `ref_transaction` (YAML) vers cette colonne plutôt que vers un témoin
+        partiel isolé (NumCompte seul), pour que la règle NA soit tranchée une seule
+        fois, GLOBALEMENT, à partir de tous les champs concernés (correctif BA).
+        """
+        numeric_field_cfg = next(
+            (f for f in self.cfg["fields"] if f["type"] == "numeric_coherence"), None
+        )
+        if numeric_field_cfg is None:
+            return df_raw
+
+        df_raw = df_raw.copy()
+        df_raw[GLOBAL_NA_COLUMN] = compute_global_no_activity_column(
+            df_raw, numeric_field_cfg["columns"]
+        )
+        return df_raw
+
+    def preprocess_exclude_columns(self) -> list[str]:
+        return [GLOBAL_NA_COLUMN]
+
+    def build_reports_markdown(self, results: list, quality) -> str:
+        """Un seul PDF (Rapport_Qualite_Outliers_*.pdf) combinant les deux rapports —
+        contenu inchangé, simplement assemblés avec un saut de page entre les deux."""
+        from e11_rdcc.reports import build_outliers_report_markdown, build_quality_report_markdown
+
+        quality_md = build_quality_report_markdown(quality)
+        outliers_md = build_outliers_report_markdown(quality, results)
+        return f'{quality_md}\n\n<div style="page-break-before: always;"></div>\n\n{outliers_md}'

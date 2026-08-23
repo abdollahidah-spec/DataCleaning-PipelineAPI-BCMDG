@@ -3,6 +3,7 @@ Vérifie le garde-fou de load_query() : seules les requêtes de lecture sont
 acceptées (protection contre une requête destructrice collée par erreur dans
 l'outil d'extraction ad hoc).
 """
+import pandas as pd
 import pytest
 
 from shared.db_connector import load_query
@@ -31,10 +32,11 @@ def test_load_query_accepts_select_syntax_check_only(monkeypatch):
         def connect(self): return _FakeConn()
 
     monkeypatch.setattr(dbc, "get_engine", lambda: _FakeEngine())
-    monkeypatch.setattr(dbc.pd, "read_sql", lambda *a, **k: "ok")
+    fake_df = pd.DataFrame({"x": [1]})
+    monkeypatch.setattr(dbc.pd, "read_sql", lambda *a, **k: fake_df)
 
     result = load_query("SELECT * FROM dbo.E11EtatBcmReleveDesComptesCorrespondants")
-    assert result == "ok"
+    assert result is fake_df
 
 
 def test_load_query_accepts_cte_with_syntax(monkeypatch):
@@ -48,7 +50,8 @@ def test_load_query_accepts_cte_with_syntax(monkeypatch):
         def connect(self): return _FakeConn()
 
     monkeypatch.setattr(dbc, "get_engine", lambda: _FakeEngine())
-    monkeypatch.setattr(dbc.pd, "read_sql", lambda *a, **k: "ok")
+    fake_df = pd.DataFrame({"x": [1]})
+    monkeypatch.setattr(dbc.pd, "read_sql", lambda *a, **k: fake_df)
 
     result = load_query("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
-    assert result == "ok"
+    assert result is fake_df

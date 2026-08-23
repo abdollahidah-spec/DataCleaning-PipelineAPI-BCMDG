@@ -36,7 +36,20 @@ from shared.writer import empty_instructions_df, write_excel_sheets
 
 
 class BaseApiPipeline:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, config_source: str = ""):
+        from dotenv import load_dotenv
+        from shared.config_validate import validate_config
+
+        # AVANT tout — certains champs lisent des variables .env dès leur
+        # construction (ex: DGI_BASE_PATH pour e08_ocd/fields/nomdonneurordre.py,
+        # chargé eagerly dans _build_field_processors() ci-dessous). Auparavant
+        # .env n'était chargé qu'en effet de bord de l'import de shared/db_connector.py
+        # — trop tard pour un champ qui a besoin d'une variable d'env avant même
+        # le premier accès DB. load_dotenv() est sans risque à rappeler plusieurs
+        # fois (idempotent).
+        load_dotenv()
+
+        validate_config(cfg, source=config_source)
         self.cfg = cfg
         self.api_id = cfg["api_id"]
         self.logger = get_logger(self.api_id)
@@ -46,6 +59,21 @@ class BaseApiPipeline:
     # ---- hook à implémenter par chaque API concrète -------------------------------
     def _build_field_processors(self, cfg: dict) -> list[FieldProcessor]:
         raise NotImplementedError
+
+    def preprocess(self, df_raw: pd.DataFrame) -> pd.DataFrame:
+        """
+        Hook optionnel : transformation appliquée au snapshot brut AVANT l'exécution
+        des FieldProcessor — pour des colonnes synthétiques partagées entre plusieurs
+        champs (ex: la colonne de non-activité globale d'E11, voir e11_rdcc/global_na.py
+        et E11Pipeline.preprocess()). Identité par défaut.
+        """
+        return df_raw
+
+    def preprocess_exclude_columns(self) -> list[str]:
+        """Colonnes synthétiques ajoutées par preprocess() à exclure de toute sortie
+        ligne-par-ligne (ex: extraction ad hoc) — jamais destinées à être exposées
+        telles quelles. Vide par défaut."""
+        return []
 
     # ---- chargement -----------------------------------------------------------------
     def _get_engine(self):
@@ -162,7 +190,7 @@ class BaseApiPipeline:
         après son {col_in} (généralisation N-champs de l'ancien get_export_cols).
         Non utilisée par le run automatisé — réutilisée par l'outil ad hoc
         e11_rdcc/ad_hoc_extraction.py pour les extractions sur mesure."""
-        exclude = set()
+        exclude = set(self.preprocess_exclude_columns())
         insertions = {}
         for p, r in results:
             exclude.update(r.exclude_from_export)
@@ -199,6 +227,42 @@ class BaseApiPipeline:
             ref_banque_col=ref_banque_col, outlier_tag=outlier_tag,
         )
 
+    # ---- rapport PDF (optionnel, hook subclass) -------------------------------------------
+    def build_reports_markdown(self, results: list, quality: QualityReport) -> Optional[str]:
+        """
+        Hook optionnel : retourne le Markdown du rapport PDF unique joint à l'email
+        (Rapport_Qualite_Outliers_*.pdf — qualité + outliers combinés dans UN seul
+        document, contenu inchangé). Dépend du schéma de chaque API — implémenté par
+        la sous-classe concrète (decision H, voir e11_rdcc/reports.py). None (défaut)
+        = pas de rapport PDF pour cette API.
+        """
+        return None
+
+    def _generate_pdf_reports(self, results: list, quality: QualityReport, run_dt: datetime) -> list:
+        import os
+
+        report_md = self.build_reports_markdown(results, quality)
+        if report_md is None:
+            return []
+
+        base_dir = os.getenv("OUTPUT_BASE", "")
+        rel_dir = self.cfg["output"]["local_dir"]
+        out_dir = Path(base_dir) / rel_dir if base_dir else Path(rel_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        date_tag = run_dt.strftime("%Y%m%d")
+
+        try:
+            from shared.pdf_report import markdown_to_pdf
+            pdf_path = markdown_to_pdf(
+                report_md, out_dir / f"Rapport_Qualite_Outliers_{self.api_id}_{date_tag}.pdf"
+            )
+            return [pdf_path]
+        except Exception:
+            # Best-effort, comme l'upload SharePoint/l'email : un échec de génération
+            # PDF ne doit pas transformer un run par ailleurs réussi en échec.
+            self.logger.exception("Échec génération du rapport PDF — email envoyé sans PDF joint")
+            return []
+
     # ---- écriture / distribution -------------------------------------------------------
     def write_output(self, sheets: dict, run_dt: datetime) -> Path:
         import os
@@ -223,13 +287,15 @@ class BaseApiPipeline:
 
     def notify(self, status: str, report: Optional[QualityReport], error: Optional[str] = None,
                exc: Optional[BaseException] = None, attachments: Optional[list] = None,
-               cumulative=None, dry_run: bool = False) -> None:
+               pdf_report_paths: Optional[list] = None, dry_run: bool = False) -> None:
         from shared.email_notifier import send_run_notification
 
         if not self.cfg.get("email", {}).get("enabled", True):
             return
+        endpoint_label = self.cfg.get("email", {}).get("display_name", self.api_id)
         send_run_notification(status=status, report=report, error=error, exc=exc,
-                               attachments=attachments, cumulative=cumulative, dry_run=dry_run)
+                               attachments=attachments, pdf_report_paths=pdf_report_paths,
+                               endpoint_label=endpoint_label, dry_run=dry_run)
 
     def persist_state(self, mode: str, status: str, max_dtcr, rows_processed: int,
                        outliers_this_run: int = 0):
@@ -240,12 +306,20 @@ class BaseApiPipeline:
 
     # ---- run complet ---------------------------------------------------------------------
     def run(self, mode: str = "auto", override_input: Optional[str] = None, dry_run: bool = False) -> dict:
+        from shared.quality_report import format_duration_mmss
+
         started_at = datetime.now()
-        self.logger.info("=== Démarrage %s (mode=%s) ===", self.api_id, mode)
+        champs_traites = ", ".join(p.field_name for p in self.field_processors)
+        # L'horodatage de chaque ligne est déjà fourni par le format du logger
+        # (voir shared/logging_conf.py) — pas besoin de le répéter dans le message.
+        self.logger.info("=== Démarrage %s ===", self.api_id)
+        self.logger.info("Mode : %s", mode)
+        self.logger.info("Champs traités : %s", champs_traites)
 
         try:
             df_raw, resolved_mode = self.load_data(mode, override_input)
             self.logger.info("%s lignes chargées (mode=%s)", len(df_raw), resolved_mode)
+            df_raw = self.preprocess(df_raw)
 
             df_final, results = self.process_fields(df_raw)
             finished_at = datetime.now()
@@ -257,35 +331,39 @@ class BaseApiPipeline:
             instructions_df = self.build_instructions_df(results)
             sheets = self.assemble_output_workbook(results, instructions_df)
             local_path = self.write_output(sheets, started_at)
+            pdf_paths = self._generate_pdf_reports(results, quality, started_at)
 
             offline = resolved_mode == "file"
-            cumulative_state = None
             if not offline:
                 dt_cr_col = self.cfg["input"].get("dt_cr_column", "dtCr")
                 from shared.db_connector import get_max_dtcr
                 max_dtcr = get_max_dtcr(df_raw, dt_cr_col)
 
                 self.upload_output(local_path, dry_run=dry_run)
-                cumulative_state = self.persist_state(
-                    resolved_mode, "OK", max_dtcr, len(df_raw), quality.n_outlier_rows
-                )
-                self.notify("OK", quality, attachments=[local_path], cumulative=cumulative_state, dry_run=dry_run)
+                self.persist_state(resolved_mode, "OK", max_dtcr, len(df_raw), quality.n_outlier_rows)
+                self.notify("OK", quality, attachments=[local_path, *pdf_paths],
+                            pdf_report_paths=pdf_paths, dry_run=dry_run)
 
-            self.logger.info("=== Terminé %s : OK ===", self.api_id)
+            run_finished_at = datetime.now()
+            self.logger.info("=== Terminé %s ===", self.api_id)
+            self.logger.info("Statut : OK")
+            self.logger.info("Durée totale : %s", format_duration_mmss((run_finished_at - started_at).total_seconds()))
             return {"status": "OK", "api_id": self.api_id, "mode": resolved_mode,
-                    "quality": quality, "path": local_path}
+                    "quality": quality, "path": local_path, "pdf_paths": pdf_paths}
 
         except Exception as exc:
-            self.logger.exception("=== Échec %s ===", self.api_id)
-            cumulative_state = None
+            run_finished_at = datetime.now()
+            self.logger.exception("=== Échec %s ===", self.api_id)  # trace complète -> log uniquement, jamais l'email
+            self.logger.error("Statut : KO")
+            self.logger.error("Durée totale : %s", format_duration_mmss((run_finished_at - started_at).total_seconds()))
             if not override_input:
                 try:
                     fallback_mode = mode if mode in ("initial", "incremental") else "incremental"
-                    cumulative_state = self.persist_state(fallback_mode, "KO", None, 0, 0)
+                    self.persist_state(fallback_mode, "KO", None, 0, 0)
                 except Exception:
                     self.logger.exception("Échec enregistrement état KO")
             try:
-                self.notify("KO", None, error=str(exc), exc=exc, cumulative=cumulative_state, dry_run=dry_run)
+                self.notify("KO", None, error=str(exc), exc=exc, dry_run=dry_run)
             except Exception:
                 self.logger.exception("Échec notification KO")
             raise

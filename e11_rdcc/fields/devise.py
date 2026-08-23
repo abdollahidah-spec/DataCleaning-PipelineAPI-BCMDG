@@ -121,7 +121,12 @@ def _resolve_devise(raw_value, ref: DeviseReferentiel):
     if not cleaned:
         return None, None
     if cleaned in ref.noise:
-        return "OUTLIER", "OUTLIER"
+        # Bruit CONNU (liste explicite du référentiel) — distinct de "OUTLIER" générique
+        # (valeur qui ne correspond simplement à rien de connu) : la ligne reste résolue
+        # à "OUTLIER" (apply_na_rule/downstream ne regarde que la valeur), mais la méthode
+        # "NOISE" permet de séparer "bruit déjà identifié, rien à faire" de "vraiment
+        # nouveau/non résolu, à examiner" dans le rapport de qualité (voir _categorical_stats).
+        return "OUTLIER", "NOISE"
     if cleaned in ref.valid:
         return cleaned, "MAP"
     if _RE_3DIGITS.match(cleaned) and cleaned in ref.num_map:

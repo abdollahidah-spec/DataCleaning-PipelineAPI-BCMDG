@@ -19,10 +19,12 @@ Une ligne source en violation de plusieurs règles produit PLUSIEURS lignes dans
 Anomalies_Numeriques (jamais masquer une anomalie derrière une autre).
 
 NumCompte (numéro de compte) est confirmé comme référence de transaction/compte pour
-E11 — utilisé comme colonne "témoin" de la règle NA pour NomCorrespondant et Devise
-(voir e11_rdcc/config/E11_RDCC.yaml), comme clé de groupement par défaut pour la
-continuité temporelle (grouping_key = [RefBanque, NumCompte]), et conservé dans la
-feuille Anomalies_Numeriques.
+E11 — utilisé comme colonne "témoin" de la règle NA globale (voir e11_rdcc/global_na.py
+et e11_rdcc/config/E11_RDCC.yaml), et conservé dans la feuille Anomalies_Numeriques.
+
+La clé de groupement pour la continuité temporelle (règle 2) est CONFIRMÉE par le
+Business Analyst : [RefBanque, NomCorrespondant, NumCompte, Devise] — filtrer d'abord
+sur ces 4 critères ensemble avant de comparer SoldeFinJournee(J) à SoldeDebutJournee(J+1).
 
 PERFORMANCE : la décision "cette ligne est-elle anomale ?" (rules 1/3/4) est
 VECTORISÉE (opérations pandas/numpy sur des colonnes entières — un aller-retour
@@ -57,15 +59,17 @@ _NO_ACTIVITY_EPSILON = 1e-9  # bruit flottant uniquement — PAS la tolérance m
 _ANOMALY_COLUMNS = [
     "NumCompte", "RefBanque",
     "SoldeDebutJournee", "TotalMvtsDebiteursJournee", "TotalMvtsCrediteurs",
-    "SoldeFinJournee", "DateFinJournee",
+    "SoldeFinJournee", "DateFinJournee", "dtCr",
     "Rule", "Detail", "Delta", "Severity",
 ]
 
 # Projection utilisée pour la feuille Excel Anomalies_Numeriques (voir commentaire ci-dessus).
+# dtCr ajouté sur demande du Business Analyst, pour faciliter la vérification manuelle
+# de la règle 4 (DATE_VALIDITY : DateFinJournee <= dtCr) sans devoir recouper avec la base.
 SHEET_COLUMNS = [
     "NumCompte", "RefBanque",
     "SoldeDebutJournee", "TotalMvtsDebiteursJournee", "TotalMvtsCrediteurs",
-    "SoldeFinJournee", "DateFinJournee",
+    "SoldeFinJournee", "DateFinJournee", "dtCr",
     "Rule", "Detail",
 ]
 
@@ -82,7 +86,9 @@ class NumericCoherenceConfig:
     nom_correspondant: str
     devise: str
     num_compte: str
-    grouping_key: list = field(default_factory=lambda: ["RefBanque", "NumCompte"])
+    grouping_key: list = field(
+        default_factory=lambda: ["RefBanque", "NomCorrespondant", "NumCompte", "Devise"]
+    )
     tolerance_abs: float = 0.01
     outlier_tag: str = "OUTLIER"
 
@@ -174,6 +180,7 @@ def _build_anomaly_row(row, cfg: NumericCoherenceConfig, rule: str, detail: str,
         "NumCompte": row.get(cfg.num_compte, ""),
         "RefBanque": row.get(cfg.ref_banque, ""),
         "DateFinJournee": row.get(cfg.date_fin, ""),
+        "dtCr": row.get(cfg.dt_cr, ""),
         "SoldeDebutJournee": row.get(cfg.solde_debut, ""),
         "TotalMvtsDebiteursJournee": row.get(cfg.mvts_debiteurs, ""),
         "TotalMvtsCrediteurs": row.get(cfg.mvts_crediteurs, ""),
@@ -465,7 +472,10 @@ def build_numeric_coherence_processor(field_cfg: dict) -> NumericCoherenceProces
         nom_correspondant=cols["nom_correspondant"],
         devise=cols["devise"],
         num_compte=cols["num_compte"],
-        grouping_key=field_cfg.get("grouping_key_temporal_continuity", ["RefBanque", "NumCompte"]),
+        grouping_key=field_cfg.get(
+            "grouping_key_temporal_continuity",
+            ["RefBanque", "NomCorrespondant", "NumCompte", "Devise"],
+        ),
         tolerance_abs=tolerance,
         outlier_tag=field_cfg.get("outlier_tag", "OUTLIER"),
     )

@@ -18,7 +18,8 @@ la même fenêtre (idempotent en cas d'échec). Les compteurs cumulatifs suivent
 même règle : ils n'augmentent que sur un run OK (un run KO n'a rien traité).
 
 Fichier : {STATE_DIR}/{api_id}_run_state.json (STATE_DIR configurable via .env,
-défaut "e11_rdcc/state/" — gitignored, propre à chaque machine/environnement).
+défaut "state/" à la racine du repo — commun à toutes les APIs, chaque fichier
+étant déjà préfixé par son `api_id`, gitignored, propre à chaque machine/environnement).
 Écriture atomique (fichier temporaire + remplacement) pour ne jamais corrompre
 l'état si le processus est interrompu en cours d'écriture.
 """
@@ -50,7 +51,7 @@ def _state_dir() -> Path:
     # si STATE_DIR="" est présente mais vide dans .env, il faut explicitement l'ignorer
     # (même garde que OUTPUT_BASE dans shared/base_api_pipeline.py::write_output).
     value = os.getenv("STATE_DIR", "").strip()
-    return Path(value) if value else Path("e11_rdcc/state")
+    return Path(value) if value else Path("state")
 
 
 def _state_path(api_id: str) -> Path:

@@ -1,0 +1,80 @@
+# e09_pe/config/E09_PE.yaml
+# Config complète de la pipeline E09_PE (BCMDG-223) — fusionnée avec shared/config_base.yaml.
+# À lancer depuis la racine du repo (chemins relatifs ci-dessous résolus depuis là).
+#
+# Table et colonnes reprises de l'ancien repo (DataCleaning-PipelineField-BCMDG,
+# devise/config/E09_PE.yaml) pour tout ce qui existait déjà (table, Devise,
+# RefBanque, NumCredoc). Colonnes CONFIRMÉES contre la table de production le
+# 2026-08-18 (SELECT TOP 1 * FROM E9EtatBcmPrevisionEcheances) : NumCredoc,
+# RefBanque, Devise, MontantEcheance, DateEcheance, dtCr — toutes présentes
+# telles quelles, aucun ajustement nécessaire.
+
+api_id: "E09_PE"
+
+input:
+  type: "sqlserver"
+  table_name: "E9EtatBcmPrevisionEcheances"
+  dt_cr_column: "dtCr"
+
+load:
+  mode: "auto"   # auto | initial | incremental
+  # Lancer `--mode initial` manuellement une première fois AVANT d'activer le
+  # Task Scheduler, pour que le premier run automatisé soit un vrai Incremental
+  # Load (voir shared/state_store.py).
+
+columns:
+  ref_banque: "RefBanque"
+
+outlier_tag: "OUTLIER"
+
+# RÈGLE NA (Devise, shared/na_rule.py::apply_na_rule) : témoin NumCredoc (confirmé
+# par l'ancien repo, devise/config/E09_PE.yaml : ref_transaction: "NumCredoc").
+# Un seul champ catégoriel sur E09 -> pas de risque d'incohérence entre plusieurs
+# champs comme pour E11, donc pas besoin du correctif "NA globale" (e11_rdcc/global_na.py).
+#   Devise == 'NA' ET NumCredoc == 'NA' -> 'NA' (légitime)
+#   Devise == 'NA' ET NumCredoc != 'NA' -> OUTLIER (NA suspecte)
+fields:
+  - name: "Devise"
+    type: "categorical"
+    columns:
+      field: "Devise"
+      field_out: "Devise_Normalisée"
+      ref_transaction: "NumCredoc"
+      ref_banque: "RefBanque"
+    outlier_tag: "OUTLIER"
+    referentiel_path: "e09_pe/referentiel/devise_referentiel.json"
+
+  - name: "Echeances"
+    type: "numeric_validation"
+    columns:
+      montant_echeance: "MontantEcheance"   # confirmé colonne SQL réelle (voir docstring ci-dessus)
+      date_echeance: "DateEcheance"          # confirmé colonne SQL réelle (voir docstring ci-dessus)
+      dt_cr: "dtCr"
+      ref_banque: "RefBanque"
+      num_credoc: "NumCredoc"                # référence du Crédit Documentaire (témoin, non normalisé)
+    outlier_tag: "OUTLIER"
+    # 2 règles (ticket BCMDG-223), voir e09_pe/fields/echeances.py :
+    #   AMOUNT_POSITIVE : MontantEcheance > 0
+    #   DATE_VALIDITY   : DateEcheance parsable et strictement postérieure à dtCr
+
+output:
+  local_dir: "e09_pe/outputs/"
+  # Chemin stable (écrasé à chaque run) — contient la feuille de classification
+  # Devise + Anomalies_Echeances + Instructions.
+  classification_path: "PowerBI/E09_PE/E09_PE_classification.xlsx"
+
+instructions:
+  prefill: true
+
+email:
+  enabled: true
+  attach_workbook_max_mb: 15
+  # Libellé utilisé tel quel dans le sujet/corps de l'email (même gabarit que E11,
+  # validé par le Business Analyst) — ex: "Pipeline E09 – PE : Rapport de qualité ...".
+  display_name: "E09 – PE"
+
+schedule:   # métadonnées uniquement — non lues par le pipeline, documente l'intention Task Scheduler
+  frequency: "weekly"
+  day: "monday"
+  time: "10:00"
+  timezone: "Africa/Nouakchott"
