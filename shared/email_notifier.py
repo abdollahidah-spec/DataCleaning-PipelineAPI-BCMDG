@@ -37,9 +37,9 @@ from shared.quality_report import QualityReport, format_duration_mmss
 _DEFAULT_ERROR_CATEGORY = "Erreur inattendue lors du traitement"
 
 
-def _is_configured() -> bool:
+def _missing_config() -> list[str]:
     required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_APP_PASSWORD", "EMAIL_TO"]
-    return all(os.getenv(k) for k in required)
+    return [k for k in required if not os.getenv(k)]
 
 
 def _recipients() -> list[str]:
@@ -190,10 +190,19 @@ def send_run_notification(
             skipped_note += f"\n(Pièce jointe {p.name} omise : {size_mb:.1f} MB > {max_mb} MB.)"
     body += skipped_note
 
-    if dry_run or not _is_configured():
-        print(f"[EMAIL][dry-run={dry_run}] To={_recipients()} Subject={subject}")
+    if dry_run:
+        print(f"[EMAIL][dry-run] To={_recipients()} Subject={subject}")
         print(f"[EMAIL] Attachments: {[str(p) for p in valid_attachments]}")
         return True
+
+    missing = _missing_config()
+    if missing:
+        # Ne JAMAIS traiter silencieusement comme un dry-run : un run réel avec une
+        # config email incomplète doit produire un avertissement explicite, sinon le
+        # run est loggé "OK" sans que personne ne sache que le mail n'est pas parti.
+        print(f"[EMAIL] NON ENVOYÉ — variable(s) manquante(s) dans .env : {missing} "
+              f"(voir .env.example). Destinataire(s) prévu(s) : {_recipients()}.")
+        return False
 
     try:
         msg = MIMEMultipart()

@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from shared.errors import DataSourceError
 
-load_dotenv()
+load_dotenv(override=True)
 
 _REQUIRED_ENV_VARS = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME"]
 

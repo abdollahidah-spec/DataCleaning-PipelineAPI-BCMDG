@@ -91,6 +91,23 @@ def test_ko_email_dry_run_returns_true():
     assert ok is True
 
 
+def test_email_not_configured_returns_false_and_does_not_silently_succeed(monkeypatch, capsys):
+    """Régression : une config email incomplète (dry_run=False) ne doit jamais être
+    traitée comme un dry-run silencieux — sinon un run réel se déclare "OK" alors
+    qu'aucun email n'est réellement parti, sans que personne ne le remarque (retour
+    tester : EMAIL_TO renseigné mais aucun mail reçu, sans avertissement)."""
+    for var in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_APP_PASSWORD", "EMAIL_TO"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("EMAIL_TO", "ba@example.com")  # partiellement rempli : SMTP_* manquants
+
+    ok = send_run_notification(status="OK", report=_quality_report(), dry_run=False)
+
+    assert ok is False
+    out = capsys.readouterr().out
+    assert "NON ENVOYÉ" in out
+    assert "SMTP_HOST" in out
+
+
 def test_new_outliers_counter_is_not_hardcoded_to_e11_rule_names():
     """Régression : le comptage des "nouveaux outliers" doit fonctionner pour
     N'IMPORTE QUELLE clé de règle non-catégorielle dans outliers_by_champ (pas

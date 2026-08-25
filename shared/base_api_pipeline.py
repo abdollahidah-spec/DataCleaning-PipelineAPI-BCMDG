@@ -46,7 +46,11 @@ class BaseApiPipeline:
         # .env n'était chargé qu'en effet de bord de l'import de shared/db_connector.py
         # — trop tard pour un champ qui a besoin d'une variable d'env avant même
         # le premier accès DB. load_dotenv() est sans risque à rappeler plusieurs
-        # fois (idempotent).
+        # fois (idempotent). Pas d'override=True ici (contrairement à
+        # shared/db_connector.py) : cet appel tourne à CHAQUE construction de
+        # pipeline (donc à chaque test qui monkeypatch un os.environ le temps
+        # d'un test) — l'override authoritatif de .env sur les credentials DB est
+        # géré une seule fois, à l'import de db_connector.py.
         load_dotenv()
 
         validate_config(cfg, source=config_source)
@@ -293,9 +297,14 @@ class BaseApiPipeline:
         if not self.cfg.get("email", {}).get("enabled", True):
             return
         endpoint_label = self.cfg.get("email", {}).get("display_name", self.api_id)
-        send_run_notification(status=status, report=report, error=error, exc=exc,
-                               attachments=attachments, pdf_report_paths=pdf_report_paths,
-                               endpoint_label=endpoint_label, dry_run=dry_run)
+        sent = send_run_notification(status=status, report=report, error=error, exc=exc,
+                                      attachments=attachments, pdf_report_paths=pdf_report_paths,
+                                      endpoint_label=endpoint_label, dry_run=dry_run)
+        if not sent and not dry_run:
+            self.logger.warning(
+                "Email de notification NON envoyé — configuration SMTP/EMAIL_TO incomplète "
+                "ou échec d'envoi (voir détail ci-dessus / .env.example)."
+            )
 
     def persist_state(self, mode: str, status: str, max_dtcr, rows_processed: int,
                        outliers_this_run: int = 0):
