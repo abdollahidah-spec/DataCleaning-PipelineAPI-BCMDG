@@ -231,6 +231,64 @@ class BaseApiPipeline:
             ref_banque_col=ref_banque_col, outlier_tag=outlier_tag,
         )
 
+    def _attach_cumulative_stats(self, quality: QualityReport, results: list, offline: bool) -> None:
+        """
+        Renseigne sur `quality` les compteurs "ensemble de l'historique" (rapport
+        PDF, shared/report_templates.py) — distincts des compteurs "cette exécution"
+        déjà posés par compute_quality() (email, shared/email_notifier.py).
+
+        Lignes/conformité : state_store.peek_cumulative() — calcule ce que serait
+        l'état SANS l'écrire (persist_state() reste appelé plus tard, après
+        l'upload/écriture de sortie, pour ne jamais avancer l'état avant qu'un run
+        ne soit intégralement livré ; les deux lectures de l'état existant
+        renvoient donc le même résultat, pas de risque de divergence).
+
+        Valeurs distinctes (catégoriel) : table de classification cumulative de
+        chaque champ (déjà indépendante du run courant, voir field_processor.py) —
+        valable aussi bien en mode fichier local qu'en mode base de données.
+
+        En mode fichier local (--input, pas d'état persistant) : ce run EST
+        considéré comme tout l'historique, pour ne jamais afficher un rapport
+        vide/à zéro lors d'un test offline.
+        """
+        from shared.field_processor import cumulative_already_clean_stats, cumulative_classification_stats
+        from shared.state_store import peek_cumulative
+
+        if offline:
+            cum_rows, cum_outliers = quality.n_rows, quality.n_outlier_rows
+        else:
+            existing = self._get_state()
+            cum_rows, cum_outliers, _ = peek_cumulative(existing, quality.n_rows, quality.n_outlier_rows)
+
+        quality.cumulative_n_rows = cum_rows
+        quality.cumulative_n_outlier_rows = cum_outliers
+        quality.cumulative_taux_conformite_pct = (
+            round(100 * (cum_rows - cum_outliers) / cum_rows, 2) if cum_rows else 0.0
+        )
+
+        n_distinct_total, n_distinct_normalized = cumulative_classification_stats(results)
+        quality.cumulative_n_distinct_total = n_distinct_total
+        quality.cumulative_n_distinct_normalized = n_distinct_normalized
+        quality.cumulative_taux_normalisation_pct = (
+            round(100 * n_distinct_normalized / n_distinct_total, 2) if n_distinct_total else 0.0
+        )
+
+        _, n_already_clean = cumulative_already_clean_stats(results)
+        quality.cumulative_n_already_clean = n_already_clean
+        # 3 catégories mutuellement exclusives, qui totalisent n_distinct_total :
+        # déjà propre / nettoyée avec succès par la pipeline / outlier non résolue.
+        n_distinct_outliers = n_distinct_total - n_distinct_normalized
+        n_distinct_cleaned = n_distinct_normalized - n_already_clean
+        quality.cumulative_taux_deja_propre_pct = (
+            round(100 * n_already_clean / n_distinct_total, 2) if n_distinct_total else 0.0
+        )
+        quality.cumulative_taux_nettoyage_pct = (
+            round(100 * n_distinct_cleaned / n_distinct_total, 2) if n_distinct_total else 0.0
+        )
+        quality.cumulative_taux_outliers_distinct_pct = (
+            round(100 * n_distinct_outliers / n_distinct_total, 2) if n_distinct_total else 0.0
+        )
+
     # ---- rapport PDF (optionnel, hook subclass) -------------------------------------------
     def build_reports_markdown(self, results: list, quality: QualityReport) -> Optional[str]:
         """
@@ -337,12 +395,14 @@ class BaseApiPipeline:
             for line in quality.to_log_lines():
                 self.logger.info(line)
 
+            offline = resolved_mode == "file"
+            self._attach_cumulative_stats(quality, results, offline)
+
             instructions_df = self.build_instructions_df(results)
             sheets = self.assemble_output_workbook(results, instructions_df)
             local_path = self.write_output(sheets, started_at)
             pdf_paths = self._generate_pdf_reports(results, quality, started_at)
 
-            offline = resolved_mode == "file"
             if not offline:
                 dt_cr_col = self.cfg["input"].get("dt_cr_column", "dtCr")
                 from shared.db_connector import get_max_dtcr

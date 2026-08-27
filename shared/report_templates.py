@@ -32,42 +32,78 @@ def format_int_fr(n: int) -> str:
 def build_quality_report_markdown(report: QualityReport) -> str:
     """Rapport de qualité des traitements — statistiques + définitions, texte
     validé par le Business Analyst reproduit tel quel. 100% générique (aucune
-    connaissance du schéma d'une API en particulier)."""
-    cat_stats = [s for s in report.per_field_stats.values() if "n_distinct_total" in s]
-    n_distinct_total = sum(s["n_distinct_total"] for s in cat_stats)
-    n_distinct_normalized = sum(s["n_distinct_normalized"] for s in cat_stats)
+    connaissance du schéma d'une API en particulier).
+
+    Indicateurs calculés sur l'ENSEMBLE DE L'HISTORIQUE traité (champs
+    `report.cumulative_*`, voir shared/base_api_pipeline.py::_attach_cumulative_stats),
+    PAS uniquement sur le delta de cette exécution — celui-ci reste réservé au
+    corps de l'email (shared/email_notifier.py). Seul "Temps total d'exécution"
+    reste par construction propre à CETTE exécution (une somme des durées de
+    chaque run n'aurait pas de sens métier).
+
+    "Nombre/Taux de valeurs déjà propres à la source" : AJOUT au-delà du gabarit
+    initialement validé (retour explicite : distinguer une valeur reçue déjà
+    conforme au référentiel — 0 traitement — d'une valeur ayant nécessité un
+    travail de la pipeline, même trivial). Les indicateurs déjà validés par le
+    Business Analyst restent inchangés au-dessus.
+    """
+    n_distinct_total = report.cumulative_n_distinct_total
+    n_distinct_normalized = report.cumulative_n_distinct_normalized
     n_distinct_outliers = n_distinct_total - n_distinct_normalized
-    taux_valeurs_normalisees = round(100 * n_distinct_normalized / max(n_distinct_total, 1), 1)
+    n_already_clean = report.cumulative_n_already_clean
+    # 3 catégories mutuellement exclusives qui totalisent n_distinct_total :
+    # déjà propre / nettoyée avec succès par la pipeline / outlier non résolue.
+    n_cleaned = n_distinct_normalized - n_already_clean
 
     return f"""# Rapport de qualité des traitements — {report.api_id}
 
 ## Statistiques générales
 
-**Nombre total de lignes traitées : {format_int_fr(report.n_rows)}**
+**Nombre total de lignes traitées : {format_int_fr(report.cumulative_n_rows)}**
 
-*Définition : nombre total d'enregistrements (lignes) parcourus par la pipeline lors de cette exécution, tous champs confondus.*
+*Définition : nombre total d'enregistrements (lignes) pris en compte par la pipeline sur l'ensemble de l'historique disponible, tous champs confondus.*
 
 **Nombre total de valeurs distinctes traitées : {format_int_fr(n_distinct_total)}**
 
-*Définition : nombre de valeurs uniques (après déduplication) rencontrées dans les champs concernés avant tout traitement de nettoyage/normalisation.*
+*Définition : nombre total de valeurs uniques, après déduplication sur l'ensemble de l'historique, rencontrées dans les champs concernés avant toute opération de nettoyage ou de normalisation.*
 
 **Nombre de valeurs distinctes normalisées : {format_int_fr(n_distinct_normalized)}**
 
-*Définition : nombre de valeurs uniques ayant été rattachées avec succès à une valeur normalisée du référentiel (relation 1 valeur normalisée → N valeurs sources).*
+*Définition : nombre total de valeurs uniques de l'ensemble de l'historique ayant été rattachées avec succès à une valeur normalisée du référentiel, selon une relation permettant de rattacher une valeur normalisée à N valeurs sources.*
 
 **Nombre de valeurs non classifiées (outliers) : {format_int_fr(n_distinct_outliers)}**
 
-*Définition : nombre de valeurs uniques n'ayant pu être associées automatiquement à aucune valeur normalisée du référentiel, et donc placées en attente de validation métier (outliers).*
+*Définition : nombre total de valeurs uniques de l'ensemble de l'historique n'ayant pu être associées automatiquement à aucune valeur normalisée du référentiel et placées en attente de validation métier (outliers).*
+
+**Nombre de valeurs déjà propres à la source : {format_int_fr(n_already_clean)}**
+
+*Définition : nombre de valeurs uniques de l'ensemble de l'historique reçues du système source identiques à une valeur du référentiel — aucun traitement de nettoyage n'a été nécessaire de la part de la pipeline pour ces valeurs.*
+
+**Nombre de valeurs nettoyées par la pipeline (traitement réussi) : {format_int_fr(n_cleaned)}**
+
+*Définition : nombre de valeurs uniques de l'ensemble de l'historique ayant nécessité une opération de la pipeline (correction, alias, normalisation, résolution automatique...) et rattachées avec succès à une valeur du référentiel — exclut les valeurs déjà propres à la source et les outliers non résolus.*
 
 ## Indicateurs de performance
 
-**Taux de données conformes : {format_pct_fr(report.taux_conformite_pct)}**
+**Taux de données conformes : {format_pct_fr(report.cumulative_taux_conformite_pct)}**
 
-*Définition : proportion des lignes traitées dont les valeurs respectent l'ensemble des règles de validation définies (formule du solde de fin de journée, cohérence temporelle des soldes, format des dates, etc.), rapportée au nombre total de lignes traitées.*
+*Définition : proportion des lignes de l'ensemble de l'historique traité dont les valeurs respectent l'ensemble des règles de validation définies (formule du solde de fin de journée, cohérence temporelle des soldes, format des dates, etc.), rapportée au nombre total de lignes de l'historique traité.*
 
-**Taux de valeurs normalisées : {format_pct_fr(taux_valeurs_normalisees)}**
+**Taux de valeurs normalisées : {format_pct_fr(report.cumulative_taux_normalisation_pct)}**
 
-*Définition : proportion des valeurs distinctes traitées ayant été rattachées avec succès à une valeur normalisée, calculée comme (nombre de valeurs distinctes normalisées / nombre total de valeurs distinctes traitées).*
+*Définition : proportion des valeurs distinctes de l'ensemble de l'historique traité ayant été rattachées avec succès à une valeur normalisée, calculée comme suit : Nombre de valeurs distinctes normalisées / Nombre total de valeurs distinctes traitées × 100.*
+
+**Taux de valeurs déjà propres à la source : {format_pct_fr(report.cumulative_taux_deja_propre_pct)}**
+
+*Définition : proportion des valeurs distinctes de l'ensemble de l'historique reçues du système source sans qu'aucun traitement de nettoyage n'ait été nécessaire, calculée comme suit : Nombre de valeurs déjà propres à la source / Nombre total de valeurs distinctes traitées × 100.*
+
+**Taux de valeurs nettoyées par la pipeline : {format_pct_fr(report.cumulative_taux_nettoyage_pct)}**
+
+*Définition : proportion des valeurs distinctes de l'ensemble de l'historique ayant nécessité un traitement de la pipeline et rattachées avec succès à une valeur du référentiel, calculée comme suit : Nombre de valeurs nettoyées par la pipeline / Nombre total de valeurs distinctes traitées × 100.*
+
+**Taux de valeurs non classifiées (outliers) : {format_pct_fr(report.cumulative_taux_outliers_distinct_pct)}**
+
+*Définition : proportion des valeurs distinctes de l'ensemble de l'historique n'ayant pu être associées automatiquement à aucune valeur normalisée du référentiel, calculée comme suit : Nombre de valeurs non classifiées (outliers) / Nombre total de valeurs distinctes traitées × 100.*
 
 **Temps total d'exécution : {format_duration_mmss(report.execution_time_seconds)}**
 

@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 
 from shared.state_store import (
+    RunState,
     _should_update_watermark,
     _state_dir,
     get_run_state,
+    peek_cumulative,
     record_run_result,
     seed_initial_state,
 )
@@ -97,3 +99,29 @@ def test_seed_initial_state_creates_when_absent(isolated_state_dir):
     assert state.last_dtcr_processed == datetime(2026, 7, 1)
     assert state.last_run_status == "OK"
     assert state.last_run_mode == "INITIAL"
+
+
+def test_peek_cumulative_no_existing_state_starts_from_zero():
+    assert peek_cumulative(None, 42, 5) == (42, 5, 1)
+
+
+def test_peek_cumulative_adds_to_existing_state():
+    existing = RunState(
+        api_id="TEST_API", last_dtcr_processed=None, last_run_status="OK", last_run_mode="incremental",
+        cumulative_rows=100, cumulative_outliers=10, cumulative_runs=2,
+    )
+    assert peek_cumulative(existing, 20, 3) == (120, 13, 3)
+
+
+def test_peek_cumulative_matches_what_record_run_result_then_persists(isolated_state_dir):
+    """peek_cumulative() ne doit jamais diverger de ce que record_run_result()
+    écrit réellement — c'est cette garantie qui permet au rapport PDF d'afficher
+    les stats cumulées AVANT que l'état ne soit officiellement persisté (voir
+    shared/base_api_pipeline.py::_attach_cumulative_stats)."""
+    record_run_result("TEST_API", "initial", "OK", datetime(2026, 7, 20), 100, outliers_this_run=10)
+
+    existing = get_run_state("TEST_API")
+    peeked = peek_cumulative(existing, 20, 3)
+
+    persisted = record_run_result("TEST_API", "incremental", "OK", datetime(2026, 7, 27), 20, outliers_this_run=3)
+    assert peeked == (persisted.cumulative_rows, persisted.cumulative_outliers, persisted.cumulative_runs)

@@ -1,6 +1,10 @@
 import pandas as pd
 
-from shared.field_processor import CategoricalFieldProcessor
+from shared.field_processor import (
+    CategoricalFieldProcessor,
+    cumulative_already_clean_stats,
+    cumulative_classification_stats,
+)
 
 
 def _fake_treating_fn(df: pd.DataFrame, field_col: str, api_id: str = None) -> pd.DataFrame:
@@ -110,3 +114,66 @@ def test_categorical_stats_breaks_down_outliers_by_method():
     stats = result.stats
     assert stats["outliers_by_method"] == {"NOISE": 3, "OUTLIER": 1}          # lignes (N1 x2, N2 x1, UNKNOWN1 x1)
     assert stats["distinct_outliers_by_method"] == {"NOISE": 2, "OUTLIER": 1}  # valeurs distinctes (N1, N2 / UNKNOWN1)
+
+
+def test_cumulative_classification_stats_reads_classification_table_not_run_rows():
+    """Régression : les stats "globales" (rapport PDF) doivent venir de la table
+    de classification CUMULATIVE (référentiel + cache, voir classification_fn),
+    PAS des lignes du run en cours — sinon un run au delta minuscule afficherait
+    un historique global minuscule lui aussi (retour BA : indicateurs du PDF
+    calculés sur l'ensemble de l'historique, pas seulement le delta)."""
+    processor = _build_processor()
+    # Le run en cours ne voit que 2 lignes (1 valeur distincte), mais la table de
+    # classification (simulée via classification_fn) représente TOUT l'historique
+    # déjà connu : 4 valeurs distinctes dont 3 normalisées.
+    processor.classification_fn = lambda api_id: pd.DataFrame({
+        "TestField": ["A", "B", "C", "Z"],
+        "TestField_Normalisé": ["X", "Y", "W", "OUTLIER"],
+    })
+    result = processor.process(pd.DataFrame({"RefBanque": ["B1"], "TestField": ["A"]}), api_id="TEST_API")
+
+    total, normalized = cumulative_classification_stats([(processor, result)])
+    assert total == 4
+    assert normalized == 3
+
+
+def test_cumulative_classification_stats_ignores_non_categorical_and_empty():
+    class _DummyNumeric:
+        field_name = "Numeric"
+
+    from shared.field_processor import FieldResult
+
+    numeric_result = FieldResult(
+        df=pd.DataFrame(), classification_df=None, outliers_df=pd.DataFrame(),
+        exclude_from_export=[], stats={}, sheet_names={},
+    )
+    total, normalized = cumulative_classification_stats([(_DummyNumeric(), numeric_result)])
+    assert (total, normalized) == (0, 0)
+
+
+def test_cumulative_already_clean_stats_distinguishes_exact_match_from_any_treatment():
+    """Retour métier explicite : une valeur brute IDENTIQUE à sa valeur normalisée
+    (comparaison littérale) = déjà propre, 0 traitement. Toute différence — même
+    un simple espace en trop retiré — ou un OUTLIER non résolu = un traitement a
+    eu lieu."""
+    processor = _build_processor()
+    processor.classification_fn = lambda api_id: pd.DataFrame({
+        "TestField": ["X", "  A", "B", "Z"],
+        "TestField_Normalisé": ["X", "A", "Y", "OUTLIER"],
+    })
+    result = processor.process(pd.DataFrame({"RefBanque": ["B1"], "TestField": ["A"]}), api_id="TEST_API")
+
+    total, already_clean = cumulative_already_clean_stats([(processor, result)])
+    assert total == 4
+    assert already_clean == 1  # seule "X" -> "X" est une correspondance littérale exacte
+
+
+def test_cumulative_already_clean_stats_outlier_never_counts_as_already_clean():
+    processor = _build_processor()
+    processor.classification_fn = lambda api_id: pd.DataFrame({
+        "TestField": ["OUTLIER"], "TestField_Normalisé": ["OUTLIER"],
+    })
+    result = processor.process(pd.DataFrame({"RefBanque": ["B1"], "TestField": ["A"]}), api_id="TEST_API")
+
+    total, already_clean = cumulative_already_clean_stats([(processor, result)])
+    assert (total, already_clean) == (1, 0)

@@ -132,6 +132,25 @@ def _should_update_watermark(status: str, max_dtcr: Optional[datetime]) -> bool:
     return status == "OK" and max_dtcr is not None
 
 
+def peek_cumulative(
+    existing: Optional[RunState], rows_processed: int, outliers_this_run: int
+) -> tuple[int, int, int]:
+    """
+    (cumulative_rows, cumulative_outliers, cumulative_runs) qu'AURAIT l'état après
+    un run OK avec ces compteurs — SANS rien écrire sur disque. Même logique
+    d'accumulation que record_run_result() (qui s'appuie dessus), exposée pour que
+    le rapport PDF (stats "ensemble de l'historique", voir
+    shared/base_api_pipeline.py::_attach_cumulative_stats) puisse afficher les
+    totaux à jour AVANT que persist_state() ne les écrive pour de vrai — celui-ci
+    reste appelé après l'upload/écriture de sortie, pour ne jamais avancer l'état
+    avant qu'un run ne soit intégralement livré (voir docstring module).
+    """
+    base_rows = existing.cumulative_rows if existing else 0
+    base_outliers = existing.cumulative_outliers if existing else 0
+    base_runs = existing.cumulative_runs if existing else 0
+    return base_rows + rows_processed, base_outliers + outliers_this_run, base_runs + 1
+
+
 def record_run_result(
     api_id: str,
     mode: str,
@@ -152,29 +171,20 @@ def record_run_result(
     advance = _should_update_watermark(status, max_dtcr_processed)
     add_rows = rows_processed if status == "OK" else 0
     add_outliers = outliers_this_run if status == "OK" else 0
+    cum_rows, cum_outliers, cum_runs = peek_cumulative(existing, add_rows, add_outliers)
 
-    if existing is None:
-        new_state = RunState(
-            api_id=api_id,
-            last_dtcr_processed=max_dtcr_processed if advance else None,
-            last_run_status=status,
-            last_run_mode=mode,
-            cumulative_rows=add_rows,
-            cumulative_outliers=add_outliers,
-            cumulative_runs=1,
-            first_run_datetime=datetime.now(),
-        )
-    else:
-        new_state = RunState(
-            api_id=api_id,
-            last_dtcr_processed=max_dtcr_processed if advance else existing.last_dtcr_processed,
-            last_run_status=status,
-            last_run_mode=mode,
-            cumulative_rows=existing.cumulative_rows + add_rows,
-            cumulative_outliers=existing.cumulative_outliers + add_outliers,
-            cumulative_runs=existing.cumulative_runs + 1,
-            first_run_datetime=existing.first_run_datetime,
-        )
+    new_state = RunState(
+        api_id=api_id,
+        last_dtcr_processed=(
+            max_dtcr_processed if advance else (existing.last_dtcr_processed if existing else None)
+        ),
+        last_run_status=status,
+        last_run_mode=mode,
+        cumulative_rows=cum_rows,
+        cumulative_outliers=cum_outliers,
+        cumulative_runs=cum_runs,
+        first_run_datetime=existing.first_run_datetime if existing else datetime.now(),
+    )
 
     _write_state(new_state)
     return new_state

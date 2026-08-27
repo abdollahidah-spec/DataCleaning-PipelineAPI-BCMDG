@@ -40,6 +40,17 @@ def _quality_report() -> QualityReport:
             "Produits": {"n_distinct_total": 8, "n_distinct_normalized": 6},
         },
         outliers_by_champ={"Devise": 2, "NomCorrespondant": 3, "Produits": 1},
+        # Voir tests/test_e11_reports.py::_quality_report — même principe (rapport
+        # PDF = compteurs "ensemble de l'historique").
+        cumulative_n_rows=40,
+        cumulative_taux_conformite_pct=55.0,
+        cumulative_n_distinct_total=19,
+        cumulative_n_distinct_normalized=15,
+        cumulative_taux_normalisation_pct=round(100 * 15 / 19, 2),
+        cumulative_n_already_clean=10,
+        cumulative_taux_deja_propre_pct=round(100 * 10 / 19, 2),
+        cumulative_taux_nettoyage_pct=round(100 * 5 / 19, 2),   # 15 normalisées - 10 déjà propres
+        cumulative_taux_outliers_distinct_pct=round(100 * 4 / 19, 2),  # 19 total - 15 normalisées
     )
 
 

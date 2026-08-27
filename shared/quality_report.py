@@ -39,6 +39,27 @@ class QualityReport:
     outliers_by_champ: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    # Stats "globales" (ENSEMBLE DE L'HISTORIQUE traité, pas seulement cette
+    # exécution) — alimentent le rapport PDF (shared/report_templates.py), par
+    # opposition aux champs ci-dessus qui restent "cette exécution" (email, voir
+    # shared/email_notifier.py). Renseignées après coup par
+    # BaseApiPipeline._attach_cumulative_stats() (shared/base_api_pipeline.py) ;
+    # valent 0 tant que non renseignées (ne devrait pas arriver en usage normal).
+    cumulative_n_rows: int = 0
+    cumulative_n_outlier_rows: int = 0
+    cumulative_taux_conformite_pct: float = 0.0
+    cumulative_n_distinct_total: int = 0
+    cumulative_n_distinct_normalized: int = 0
+    cumulative_taux_normalisation_pct: float = 0.0
+    # Répartition à 3 catégories, mutuellement exclusives, qui totalisent 100% de
+    # cumulative_n_distinct_total : déjà propre (0 traitement) / nettoyée avec
+    # succès par la pipeline / outlier (non résolue) — voir
+    # shared/field_processor.py::cumulative_already_clean_stats et
+    # shared/base_api_pipeline.py::_attach_cumulative_stats.
+    cumulative_n_already_clean: int = 0
+    cumulative_taux_deja_propre_pct: float = 0.0
+    cumulative_taux_nettoyage_pct: float = 0.0
+    cumulative_taux_outliers_distinct_pct: float = 0.0
 
     @property
     def execution_time_seconds(self) -> float:

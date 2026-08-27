@@ -56,7 +56,7 @@ def _fmt_int(n: int) -> str:
 
 
 def _mode_label(mode: str) -> str:
-    return "Incremental Load – delta" if mode == "incremental" else "Initial Load – historique complet"
+    return "Incremental Load (delta)" if mode == "incremental" else "Initial Load (historique complet)"
 
 
 def _new_values_counters(report: QualityReport) -> tuple[int, int, int]:
@@ -89,14 +89,15 @@ def _build_ok_subject(endpoint_label: str, date_str: str) -> str:
 def _build_ok_body(report: QualityReport, endpoint_label: str, date_str: str, pdf_paths: list) -> str:
     is_delta = report.mode == "incremental"
     suf = " (delta)" if is_delta else ""
-    header = "INDICATEURS DE L'EXÉCUTION (DELTA)" if is_delta else "INDICATEURS DE L'EXÉCUTION"
+    header = "INDICATEURS DE L'EXÉCUTION – DELTA" if is_delta else "INDICATEURS DE L'EXÉCUTION"
     n_new_distinct, n_new_normalized, n_new_outliers = _new_values_counters(report)
 
     if pdf_paths:
         pdf_lines = "\n".join(p.name for p in pdf_paths)
         detail_paragraph = (
-            "Le détail complet – statistiques globales cumulées, répartition des outliers par champ "
-            "traité et par RefBanque – est disponible dans les rapports joints :\n"
+            "Le détail complet des résultats, incluant notamment les statistiques de qualité du "
+            "traitement, les statistiques globales cumulées ainsi que la répartition des outliers "
+            "par champ traité et par RefBanque, est disponible dans le rapport joint :\n"
             f"{pdf_lines}\n\n"
         )
     else:
@@ -104,22 +105,20 @@ def _build_ok_body(report: QualityReport, endpoint_label: str, date_str: str, pd
 
     return (
         "Bonjour,\n\n"
-        f"Veuillez trouver ci-dessous les indicateurs clés de l'exécution (mode {_mode_label(report.mode)}) "
-        f"de la pipeline de nettoyage/normalisation de l'endpoint {endpoint_label} du {date_str}, ainsi que "
-        "le rapport de qualité et le rapport des outliers complets en pièce jointe (PDF) pour une vision globale.\n\n"
-        "============================================\n"
-        f"{header}\n"
-        "============================================\n\n"
+        f"Veuillez trouver ci-dessous les indicateurs clés de l'exécution en mode {_mode_label(report.mode)} "
+        f"de la pipeline de nettoyage et de normalisation de l'endpoint {endpoint_label}, réalisée le {date_str}.\n\n"
+        "Vous trouverez également en pièce jointe le rapport complet de qualité du traitement et des "
+        "outliers, permettant d'avoir une vision globale de l'ensemble de l'historique traité.\n\n"
+        f"{header}\n\n"
         f"Nombre de lignes traitées{suf} : {_fmt_int(report.n_rows)}\n"
         f"Nombre de nouvelles valeurs distinctes détectées : {_fmt_int(n_new_distinct)}\n"
         f"Nombre de nouvelles valeurs normalisées : {_fmt_int(n_new_normalized)}\n"
-        f"Nombre de nouveaux outliers : {_fmt_int(n_new_outliers)}\n"
+        f"Nombre de nouveaux outliers détectés : {_fmt_int(n_new_outliers)}\n"
         f"Taux de données conformes{suf} : {_fmt_pct(report.taux_conformite_pct)}\n"
         f"Temps d'exécution{suf} : {format_duration_mmss(report.execution_time_seconds)}\n\n"
-        "============================================\n\n"
         f"{detail_paragraph}"
-        "Merci de bien vouloir consulter le rapport des outliers et de procéder à la validation métier "
-        "des valeurs listées.\n\n"
+        "Merci de bien vouloir consulter le rapport et procéder à la validation métier des valeurs "
+        "identifiées comme outliers.\n\n"
         "Restant à disposition pour toute question ou précision complémentaire.\n\n"
         "Cordialement,\n"
     )

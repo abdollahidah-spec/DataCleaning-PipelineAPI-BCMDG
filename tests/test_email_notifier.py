@@ -36,7 +36,7 @@ def test_ok_email_body_matches_ba_template_structure():
 
     assert subject == "Pipeline E11 – RDCC : Rapport de qualité et rapport des outliers – 27/07/2026"
     assert body.startswith("Bonjour,")
-    assert "INDICATEURS DE L'EXÉCUTION (DELTA)" in body
+    assert "INDICATEURS DE L'EXÉCUTION – DELTA" in body
     assert "Nombre de lignes traitées (delta) : 10" in body
     assert "Taux de données conformes (delta) : 80,0 %" in body
     assert "Temps d'exécution (delta) : 01 min 30 s" in body

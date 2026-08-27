@@ -47,6 +47,20 @@ def _quality_report() -> QualityReport:
             "NomCorrespondant": 3, "Devise": 0, "ARITHMETIC": 2,
             "TEMPORAL_CONTINUITY": 1, "DATE_VALIDITY": 1, "NO_ACTIVITY_CONFORMITY": 0,
         },
+        # Le rapport PDF (build_quality_report_markdown) lit désormais les compteurs
+        # "ensemble de l'historique" — voir shared/base_api_pipeline.py::
+        # _attach_cumulative_stats. Ici, mêmes valeurs que le run pour garder ce test
+        # focalisé sur le gabarit Markdown lui-même (la sémantique cumulative est
+        # testée séparément, voir tests/test_base_api_pipeline_cumulative.py).
+        cumulative_n_rows=100,
+        cumulative_taux_conformite_pct=75.0,
+        cumulative_n_distinct_total=14,
+        cumulative_n_distinct_normalized=11,
+        cumulative_taux_normalisation_pct=round(100 * 11 / 14, 2),
+        cumulative_n_already_clean=8,
+        cumulative_taux_deja_propre_pct=round(100 * 8 / 14, 2),
+        cumulative_taux_nettoyage_pct=round(100 * 3 / 14, 2),          # 11 normalisées - 8 déjà propres
+        cumulative_taux_outliers_distinct_pct=round(100 * 3 / 14, 2),  # 14 total - 11 normalisées
     )
 
 
@@ -76,14 +90,19 @@ def test_quality_report_markdown_has_verbatim_definitions_and_correct_numbers():
     md = build_quality_report_markdown(_quality_report())
 
     assert "Nombre total de lignes traitées : 100" in md
-    assert "nombre total d'enregistrements (lignes) parcourus par la pipeline lors de cette exécution" in md
+    assert "nombre total d'enregistrements (lignes) pris en compte par la pipeline sur l'ensemble de l'historique" in md
     assert "Nombre total de valeurs distinctes traitées : 14" in md
     assert "Nombre de valeurs distinctes normalisées : 11" in md
     assert "Nombre de valeurs non classifiées (outliers) : 3" in md
     assert "Taux de données conformes : 75,0 %" in md
     assert "Taux de valeurs normalisées : 78,6 %" in md
+    assert "Nombre de valeurs déjà propres à la source : 8" in md
+    assert "Nombre de valeurs nettoyées par la pipeline (traitement réussi) : 3" in md
+    assert "Taux de valeurs déjà propres à la source : 57,1 %" in md
+    assert "Taux de valeurs nettoyées par la pipeline : 21,4 %" in md
+    assert "Taux de valeurs non classifiées (outliers) : 21,4 %" in md
     assert "Temps total d'exécution : 00 min 42 s" in md
-    assert "relation 1 valeur normalisée → N valeurs sources" in md
+    assert "rattacher une valeur normalisée à N valeurs sources" in md
 
 
 def test_outliers_report_field_breakdown_matches_ba_template_rows():

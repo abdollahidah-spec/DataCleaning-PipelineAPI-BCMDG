@@ -199,3 +199,59 @@ def _categorical_stats(df: pd.DataFrame, col_in: str, col_out: str, outlier_tag:
         "n_new_normalized": n_new_normalized,    # ... dont normalisées avec succès (ex: résolues par Claude)
         "n_new_outliers": n_new_outliers,        # ... dont toujours en OUTLIER
     }
+
+
+def cumulative_classification_stats(results: list) -> tuple[int, int]:
+    """
+    (n_distinct_total, n_distinct_normalized) cumulés — ENSEMBLE DE L'HISTORIQUE
+    traité, tous champs catégoriels confondus — PAS les lignes du run en cours.
+
+    Source : la table de classification de chaque champ (CategoricalFieldProcessor.
+    classification_fn, référentiel + cache warm-start), déjà cumulative par
+    construction et indépendante du run courant (voir son docstring). Contrairement
+    à _categorical_stats() ci-dessus (qui reflète seulement le run courant, utilisé
+    pour les compteurs "nouveau ce run" de l'email), cette fonction alimente les
+    stats "globales" du rapport PDF (shared/report_templates.py, voir
+    shared/base_api_pipeline.py::_attach_cumulative_stats).
+    """
+    total = 0
+    normalized = 0
+    for p, r in results:
+        if not isinstance(p, CategoricalFieldProcessor) or r.classification_df is None:
+            continue
+        df = r.classification_df
+        if df.empty:
+            continue
+        total += len(df)
+        normalized += int((df[p.col_out] != p.outlier_tag).sum())
+    return total, normalized
+
+
+def cumulative_already_clean_stats(results: list) -> tuple[int, int]:
+    """
+    (n_distinct_total, n_already_clean) cumulés — ENSEMBLE DE L'HISTORIQUE traité,
+    tous champs catégoriels confondus. Distingue une valeur reçue DÉJÀ propre
+    (aucun traitement de notre part) d'une valeur ayant nécessité un traitement
+    (normalisation réussie OU outlier non résolu) — retour métier explicite :
+    "si la valeur brute existe telle quelle dans le référentiel, on n'a rien fait ;
+    sinon, même un simple espace en trop retiré, c'est déjà un traitement".
+
+    Test = comparaison LITTÉRALE (brut == normalisé) sur la table de classification
+    cumulative — pas un nouveau tag de méthode par champ : n'importe quelle
+    transformation (STRIP/ALIAS/NUM/CLAUDE/fuzzy...) change forcément la valeur
+    normalisée par rapport à la valeur brute, donc échoue ce test et compte comme
+    "traitement". Un OUTLIER compte aussi comme "traitement" (tentative échouée),
+    jamais comme "déjà propre".
+    """
+    total = 0
+    already_clean = 0
+    for p, r in results:
+        if not isinstance(p, CategoricalFieldProcessor) or r.classification_df is None:
+            continue
+        df = r.classification_df
+        if df.empty:
+            continue
+        total += len(df)
+        exact_match = (df[p.col_in] == df[p.col_out]) & (df[p.col_out] != p.outlier_tag)
+        already_clean += int(exact_match.sum())
+    return total, already_clean
