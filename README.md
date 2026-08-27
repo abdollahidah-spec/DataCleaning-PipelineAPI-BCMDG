@@ -246,8 +246,9 @@ Chaque run automatisé produit **un classeur Excel** `E11_RDCC_classification.xl
 | `Instructions` | Pré-remplie avec les outliers détectés (`Champ`, `Input`, `Label_Attendu`) pour la boucle de correction |
 
 Pas d'extraction ligne par ligne dans ce classeur (sur demande métier — voir *Extraction ad hoc*
-pour un export complet à la demande). Stocké en local (`e11_rdcc/outputs/`, ou `{OUTPUT_BASE}/...`
-si renseigné) + SharePoint si configuré (chemin stable, écrasé à chaque run) — source Power BI.
+pour un export complet à la demande). Stocké en local (`e11_rdcc/outputs/`, ou
+`{OUTPUT_BASE}/E11_RDCC/` — nom de l'API en majuscules, sans niveau `outputs/` — si `OUTPUT_BASE`
+renseigné dans `.env`) + SharePoint si configuré (chemin stable, écrasé à chaque run) — source Power BI.
 
 En plus du classeur, chaque run génère **un rapport PDF unique** (Markdown → PDF, pure Python,
 `shared/pdf_report.py` + `shared/report_templates.py` + le module `reports.py` de l'API) :

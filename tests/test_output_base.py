@@ -21,6 +21,19 @@ def test_output_base_redirects_local_storage(tmp_path, monkeypatch):
     assert result["path"].exists()
 
 
+def test_output_base_uses_uppercase_api_id_with_no_outputs_subfolder(tmp_path, monkeypatch):
+    """OUTPUT_BASE défini : {OUTPUT_BASE}/{API_ID EN MAJUSCULES}/, sans niveau
+    "outputs/" intermédiaire — un dossier par API nommé d'après son api_id, pour
+    que les 3 API lancées en parallèle n'entrent jamais en collision (retour
+    explicite : "supprimer le niveau output et le nom de l'API en majuscules")."""
+    monkeypatch.setenv("OUTPUT_BASE", str(tmp_path))
+
+    cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
+    result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
+
+    assert result["path"].parent == tmp_path / "E11_RDCC"
+
+
 def test_output_base_empty_uses_local_dir_in_repo(monkeypatch, tmp_path_factory):
     monkeypatch.delenv("OUTPUT_BASE", raising=False)
 

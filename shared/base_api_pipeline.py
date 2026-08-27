@@ -289,6 +289,24 @@ class BaseApiPipeline:
             round(100 * n_distinct_outliers / n_distinct_total, 2) if n_distinct_total else 0.0
         )
 
+    def _resolve_output_dir(self) -> Path:
+        """
+        Répertoire de sortie local, utilisé par write_output() et
+        _generate_pdf_reports(). OUTPUT_BASE non défini (.env) : chemin relatif
+        `output.local_dir` du YAML, inchangé (usage repo/dev, ex: "e11_rdcc/outputs/").
+        OUTPUT_BASE défini : `{OUTPUT_BASE}/{API_ID EN MAJUSCULES}/` — un
+        sous-dossier par API nommé directement d'après son api_id (pas de niveau
+        "outputs/" intermédiaire), pour que les 3 API lancées en parallèle écrivent
+        chacune dans son propre dossier, sans collision, à un chemin prévisible
+        côté exploitation (ex: {OUTPUT_BASE}/E11_RDCC/).
+        """
+        import os
+
+        base_dir = os.getenv("OUTPUT_BASE", "").strip()
+        if base_dir:
+            return Path(base_dir) / self.api_id.upper()
+        return Path(self.cfg["output"]["local_dir"])
+
     # ---- rapport PDF (optionnel, hook subclass) -------------------------------------------
     def build_reports_markdown(self, results: list, quality: QualityReport) -> Optional[str]:
         """
@@ -301,15 +319,11 @@ class BaseApiPipeline:
         return None
 
     def _generate_pdf_reports(self, results: list, quality: QualityReport, run_dt: datetime) -> list:
-        import os
-
         report_md = self.build_reports_markdown(results, quality)
         if report_md is None:
             return []
 
-        base_dir = os.getenv("OUTPUT_BASE", "")
-        rel_dir = self.cfg["output"]["local_dir"]
-        out_dir = Path(base_dir) / rel_dir if base_dir else Path(rel_dir)
+        out_dir = self._resolve_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         date_tag = run_dt.strftime("%Y%m%d")
 
@@ -327,14 +341,7 @@ class BaseApiPipeline:
 
     # ---- écriture / distribution -------------------------------------------------------
     def write_output(self, sheets: dict, run_dt: datetime) -> Path:
-        import os
-
-        # OUTPUT_BASE (.env) : chemin exact (local ou réseau) où stocker le livrable,
-        # sans dépendre de SharePoint. Vide -> comportement inchangé (local_dir relatif
-        # au répertoire courant). Défini -> écrit sous {OUTPUT_BASE}/{local_dir}.
-        base_dir = os.getenv("OUTPUT_BASE", "")
-        rel_dir = self.cfg["output"]["local_dir"]
-        out_dir = Path(base_dir) / rel_dir if base_dir else Path(rel_dir)
+        out_dir = self._resolve_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
         return write_excel_sheets(sheets, out_dir / f"{self.api_id}_classification.xlsx")
