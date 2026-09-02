@@ -113,7 +113,7 @@ def _build_ok_body(report: QualityReport, endpoint_label: str, date_str: str, pd
         f"Nombre de lignes traitées{suf} : {_fmt_int(report.n_rows)}\n"
         f"Nombre de nouvelles valeurs distinctes détectées : {_fmt_int(n_new_distinct)}\n"
         f"Nombre de nouvelles valeurs normalisées : {_fmt_int(n_new_normalized)}\n"
-        f"Nombre de nouveaux outliers détectés : {_fmt_int(n_new_outliers)}\n"
+        f"Nombre de nouveaux outliers : {_fmt_int(n_new_outliers)}\n"
         f"Taux de données conformes{suf} : {_fmt_pct(report.taux_conformite_pct)}\n"
         f"Temps d'exécution{suf} : {format_duration_mmss(report.execution_time_seconds)}\n\n"
         f"{detail_paragraph}"
