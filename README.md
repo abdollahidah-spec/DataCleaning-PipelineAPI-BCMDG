@@ -55,7 +55,7 @@ DataCleaning-PipelineAPI-BCMDG/
 ├── req/                Fichiers de référence externes (base fiscale DGI, entreprises publiques)
 │   │                    — gitignored, chemins pilotés par .env (DGI_BASE_PATH/PUBLIC_ENT_PATH)
 ├── state/              État incrémental local, un fichier JSON par API (gitignored)
-├── scripts/            run_weekly.ps1 (cible Task Scheduler), seed_state.py
+├── scripts/            run_pipeline.ps1 (cible Task Scheduler), seed_state.py
 ├── docs/               ARCHITECTURE.md, FUNCTIONAL.md, CONFIGURATION.md
 └── tests/
 ```
@@ -236,9 +236,13 @@ notifications sont simplement ignorées (aucune erreur, aucun blocage du run).
 
 ### Ordonnancement en production (Windows Task Scheduler)
 
-Voir [scripts/run_weekly.ps1](scripts/run_weekly.ps1) — job hebdomadaire, lundi 10h, mode
-incrémental. **Avant la toute première activation du job**, lancer manuellement un
-`--mode initial` pour amorcer l'état incrémental (voir *État incrémental* ci-dessous).
+Voir [scripts/run_pipeline.ps1](scripts/run_pipeline.ps1) (ou son wrapper
+[run_pipeline.bat](run_pipeline.bat)) — lance les 3 pipelines en mode incrémental.
+La **fréquence est définie par le déclencheur du Task Scheduler**, pas par le script :
+quotidienne ou hebdomadaire, les deux fonctionnent sans modification (chaque run traite
+le delta accumulé depuis le dernier run réussi). **Avant la toute première activation du
+job**, lancer manuellement un `--mode initial` par API pour amorcer l'état incrémental
+(voir *État incrémental* ci-dessous).
 
 ---
 

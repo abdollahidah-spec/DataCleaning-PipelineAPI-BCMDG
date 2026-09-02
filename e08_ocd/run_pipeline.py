@@ -16,11 +16,14 @@ import sys
 
 from shared.config import load_config
 from shared.console import force_utf8_console
+from shared.env_loader import load_env_authoritative
 
 from e08_ocd.pipeline import E08Pipeline
 
 
 def main() -> int:
+    # .env fait foi, AVANT tout le reste (voir shared/env_loader.py).
+    load_env_authoritative()
     force_utf8_console()
     parser = argparse.ArgumentParser(description="Pipeline de nettoyage E08_OCD")
     parser.add_argument("--config", required=True, help="Chemin du YAML E08_OCD")

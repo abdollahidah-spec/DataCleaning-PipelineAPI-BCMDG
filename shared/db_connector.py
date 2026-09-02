@@ -22,7 +22,13 @@ from dotenv import load_dotenv
 
 from shared.errors import DataSourceError
 
-load_dotenv(override=True)
+# Chargement de confort pour un usage direct de ce module (script ad hoc, REPL) :
+# SANS override, pour ne jamais écraser une variable déjà posée par l'appelant.
+# Le chargement AUTORITAIRE de .env (override=True, qui fait primer .env sur une
+# éventuelle variable d'environnement périmée de la machine) a lieu une seule fois
+# au démarrage du process, dans le point d'entrée CLI — voir
+# shared/env_loader.py::load_env_authoritative et {api}/run_pipeline.py.
+load_dotenv()
 
 _REQUIRED_ENV_VARS = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME"]
 

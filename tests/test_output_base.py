@@ -50,7 +50,17 @@ def test_pdf_report_goes_to_dedicated_rapport_subfolder(tmp_path, monkeypatch):
 
 
 def test_output_base_empty_uses_local_dir_in_repo(monkeypatch, tmp_path_factory):
+    """OUTPUT_BASE non défini DU TOUT (ni process, ni .env) -> dossier du repo.
+
+    Il ne suffit pas de retirer la variable du process : le pipeline recharge
+    .env, qui la redéfinirait aussitôt sur un poste où elle est renseignée. On
+    neutralise donc aussi ce rechargement, pour tester le vrai cas "aucune
+    configuration OUTPUT_BASE nulle part".
+    """
+    import dotenv
+
     monkeypatch.delenv("OUTPUT_BASE", raising=False)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
 
     cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
     try:

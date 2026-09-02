@@ -23,6 +23,7 @@ import pandas as pd
 
 from shared.config import load_config
 from shared.console import force_utf8_console
+from shared.env_loader import load_env_authoritative
 from shared.corrections_history import append_corrections, history_path
 
 from e09_pe.pipeline import build_e09_field_processors
@@ -99,6 +100,8 @@ def _guess_api_id(filename: str) -> str | None:
 
 
 if __name__ == "__main__":
+    # .env fait foi, AVANT tout le reste (voir shared/env_loader.py).
+    load_env_authoritative()
     force_utf8_console()
     parser = argparse.ArgumentParser(description="Applique les corrections manuelles (onglet Instructions)")
     parser.add_argument("--file", required=True, help="Fichier E09_PE_classification.xlsx")

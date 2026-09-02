@@ -16,10 +16,13 @@ import argparse
 from datetime import datetime
 
 from shared.console import force_utf8_console
+from shared.env_loader import load_env_authoritative
 from shared.state_store import seed_initial_state
 
 
 def main() -> None:
+    # .env fait foi, AVANT tout le reste (voir shared/env_loader.py).
+    load_env_authoritative()
     force_utf8_console()
     parser = argparse.ArgumentParser(description="Seed manuel de l'état incrémental local")
     parser.add_argument("--api-id", required=True)
