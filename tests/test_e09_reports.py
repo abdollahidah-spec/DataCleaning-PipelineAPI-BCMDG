@@ -87,10 +87,10 @@ def test_outliers_report_has_three_rows_no_numcredoc():
         assert label in md
     assert "numCredoc" not in md
 
-    assert "| devise | 4 |" in md
-    assert "| montantEcheance | 3 |" in md
-    assert "| dateEcheance | 2 |" in md
-    assert "**Total** | **9**" in md
+    assert '<td>devise</td><td class="num">4</td>' in md
+    assert '<td>montantEcheance</td><td class="num">3</td>' in md
+    assert '<td>dateEcheance</td><td class="num">2</td>' in md
+    assert '<td>TOTAL</td><td class="num">9</td>' in md
 
 
 def test_outliers_report_refbanque_detail_uses_numcredoc_as_source_value():

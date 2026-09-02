@@ -177,16 +177,24 @@ python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode in
 
 ### Corrections manuelles (apply_corrections.py)
 
-Le classeur `E11_RDCC_classification.xlsx` contient un onglet **Instructions**, pré-rempli
-automatiquement avec les outliers détectés (`Champ`, `Input`, `Label_Attendu` vide). Une équipe
-métier renseigne `Label_Attendu` (nom légal correct, ou `OUTLIER`), puis :
+Les valeurs à valider sont les lignes `OUTLIER` des onglets de classification du classeur
+(`E11_RDCC_classification.xlsx`), également détaillées par champ dans le rapport PDF. L'équipe
+métier prépare un fichier Excel comportant un onglet **Instructions** à 3 colonnes — `Champ`,
+`Input` (la valeur brute), `Label_Attendu` (le nom légal correct, ou `OUTLIER`) — puis :
 
 ```bash
-python -m e11_rdcc.apply_corrections --file "e11_rdcc/outputs/E11_RDCC_classification.xlsx"
+python -m e11_rdcc.apply_corrections --file "corrections_a_appliquer.xlsx"
 ```
 
 met à jour le cache warm-start du champ concerné (déduit de la colonne `Champ`) — la correction
 prime dès le run suivant, sans jamais retoucher le fichier Excel source.
+
+**Traçabilité** : chaque correction appliquée est journalisée dans l'historique propre à l'API
+(`{api}/referentiel/corrections_history_{api_id}.json`, un fichier par API, jamais partagé). Cet
+historique est reproduit en **lecture seule** dans l'onglet `Instructions` du classeur produit au
+run suivant (`Date`, `Champ`, `Input`, `Label_Attendu`) : **vide au tout premier run**, puis
+enrichi au fil des validations métier. Rejouer deux fois la même correction ne crée pas de
+doublon ; corriger différemment une valeur déjà corrigée laisse bien les deux entrées.
 
 ### Extraction ad hoc (requête SQL personnalisée)
 
@@ -243,7 +251,7 @@ Chaque run automatisé produit **un classeur Excel** `E11_RDCC_classification.xl
 |---|---|
 | `NomCorrespondant`, `Devise` | Classification : valeur brute → valeur normalisée (OUTLIER inclus). **Cumulative** — construite depuis le référentiel + le cache warm-start, pas depuis les lignes du run, donc jamais amputée des labels déjà connus en mode incrémental |
 | `Anomalies_Numeriques` | Uniquement les lignes en anomalie (les 4 règles de cohérence) — NumCompte, RefBanque, colonnes numériques/date concernées, `dtCr`, règle violée, détail |
-| `Instructions` | Pré-remplie avec les outliers détectés (`Champ`, `Input`, `Label_Attendu`) pour la boucle de correction |
+| `Instructions` | **Historique en lecture seule** des corrections manuelles déjà appliquées via `apply_corrections` (`Date`, `Champ`, `Input`, `Label_Attendu`) — un historique par API, **vide au tout premier run** |
 
 Pas d'extraction ligne par ligne dans ce classeur (sur demande métier — voir *Extraction ad hoc*
 pour un export complet à la demande). Stocké en local (`e11_rdcc/outputs/`, ou
@@ -253,9 +261,12 @@ renseigné dans `.env`) + SharePoint si configuré (chemin stable, écrasé à c
 En plus du classeur, chaque run génère **un rapport PDF unique** (Markdown → PDF, pure Python,
 `shared/pdf_report.py` + `shared/report_templates.py` + le module `reports.py` de l'API) :
 `Rapport_Qualite_Outliers_{api_id}_{yyyymmdd}.pdf`, deux sections dans le même fichier (saut de
-page entre les deux) — statistiques générales + indicateurs de performance de ce run, puis
-répartition des outliers par champ traité et par RefBanque. Les deux fichiers (classeur + PDF)
-sont joints à l'email de notification OK.
+page entre les deux) — statistiques générales + indicateurs de performance sur l'ensemble de
+l'historique traité, puis synthèse des outliers par champ traité et **détail par champ** (un
+tableau par champ : valeur source, RefBanque, nb d'occurrences). Le nombre de valeurs détaillées
+par champ est plafonné par `reports.top_n_outliers_detail` (YAML, `0` = tout afficher) — la liste
+exhaustive reste dans le classeur Excel. Le PDF est écrit dans un sous-dossier `Rapport/` dédié,
+séparé du classeur. Les deux fichiers (classeur + PDF) sont joints à l'email de notification OK.
 
 Le corps de l'email OK suit un gabarit texte (pas HTML) validé par le Business Analyst : sujet
 `Pipeline {libellé endpoint} : Rapport de qualité et rapport des outliers – {date}` (ex: "E11 –

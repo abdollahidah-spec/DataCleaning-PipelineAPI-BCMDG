@@ -19,8 +19,13 @@ llm:
   max_retry:   3
   retry_wait:  2
 
-instructions:
-  prefill: true
+reports:
+  # Nombre max de valeurs outliers détaillées PAR CHAMP dans le rapport PDF
+  # (section "Détail des outliers par champ"). 0 = aucune limite, tout est
+  # listé. Garde-fou contre un PDF de plusieurs centaines de pages lors d'un
+  # Initial Load remontant des milliers d'outliers ; la liste exhaustive reste
+  # de toute façon dans le classeur Excel de classification.
+  top_n_outliers_detail: 100
 
 email:
   enabled: true

@@ -16,6 +16,19 @@ def _no_external_calls(monkeypatch):
     monkeypatch.delenv("SHAREPOINT_TENANT_ID", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_corrections_history(tmp_path_factory, monkeypatch):
+    """Aucun test ne doit écrire un vrai fichier d'historique de corrections dans
+    `{api}/referentiel/` du repo — `apply_corrections()` en écrit un à chaque
+    appel (shared/corrections_history.py). Autouse : la garantie ne doit pas
+    dépendre du fait qu'un test pense à demander la bonne fixture."""
+    import shared.corrections_history as corrections_history
+
+    monkeypatch.setattr(
+        corrections_history, "_REPO_ROOT", tmp_path_factory.mktemp("corrections_history")
+    )
+
+
 @pytest.fixture
 def isolated_referentiel_dir(tmp_path, monkeypatch):
     """Redirige les référentiels ET les caches warm-start (Devise + NomCorrespondant)

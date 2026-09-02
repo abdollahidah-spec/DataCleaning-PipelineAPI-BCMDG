@@ -23,6 +23,7 @@ import pandas as pd
 
 from shared.config import load_config
 from shared.console import force_utf8_console
+from shared.corrections_history import append_corrections, history_path
 
 from e09_pe.pipeline import build_e09_field_processors
 
@@ -78,6 +79,13 @@ def apply_corrections(file_path: str | Path, api_id: str, config_path: str | Pat
         applied[champ] = corrections
         suffix = f", {ignorees} ligne(s) ignorée(s) (incomplète)" if ignorees else ""
         print(f"  [{champ}] {len(corrections)} correction(s) appliquée(s){suffix}")
+
+    # Traçabilité : historique propre à cette API, affiché en LECTURE SEULE dans
+    # l'onglet "Instructions" du classeur produit au run suivant (vide tant que
+    # personne n'a rien corrigé) — voir shared/corrections_history.py.
+    n_logged = append_corrections(api_id, applied)
+    if n_logged:
+        print(f"  [Historique] {n_logged} correction(s) ajoutée(s) à {history_path(api_id).name}")
 
     return applied
 

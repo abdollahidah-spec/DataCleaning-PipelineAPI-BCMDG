@@ -73,8 +73,12 @@ fields:
   - name: "Produits"
     type: "categorical"
     columns:
-      field: "Produits"
-      field_out: "Produits_Normalisé"
+      # Colonne SQL réelle : "Produit" au SINGULIER (nom confirmé contre la table
+      # de production le 2026-09-02). `name` reste "Produits" — c'est
+      # l'identifiant interne du champ (nom d'onglet, clé de la colonne `Champ`
+      # des corrections, cache warm-start), pas un nom de colonne source.
+      field: "Produit"
+      field_out: "Produit_Normalisé"
       ref_transaction: "NumCredoc"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
@@ -92,7 +96,14 @@ fields:
       field_out: "NomDonneurOrdre_Normalisé"
       ref_transaction: "NumCredoc"
       ref_banque: "RefBanque"
-      nif_nni: "NifNni"                    # colonne NIF/NNI — matching DGI exact (optionnel : si absente, cette étape est juste sautée)
+      # ⚠ Cette colonne N'EXISTE PAS dans la table de production E08 (schéma
+      # confirmé le 2026-09-02) : l'étape de matching DGI par NIF exact est donc
+      # inactive pour E08, le matching se fait par nom (exact normalisé, puis
+      # rapidfuzz, puis arbitrage Claude). Le nom reste configuré ici pour que
+      # l'étape se réactive d'elle-même si la colonne est ajoutée un jour à la
+      # table — le code la saute proprement tant qu'elle est absente
+      # (e08_ocd/fields/nomdonneurordre.py : `if nif_col in df.columns`).
+      nif_nni: "NifNni"
     outlier_tag: "OUTLIER"
     referentiel_path: "e08_ocd/referentiel/nomdonneurordre_referentiel_E08.json"
     # Seuils de matching DGI (identiques à l'ancien repo, ancien seuils déjà
@@ -148,9 +159,6 @@ output:
   # Chemin stable (écrasé à chaque run) — une feuille de classification par champ
   # + Instructions.
   classification_path: "PowerBI/E08_OCD/E08_OCD_classification.xlsx"
-
-instructions:
-  prefill: true
 
 email:
   enabled: true

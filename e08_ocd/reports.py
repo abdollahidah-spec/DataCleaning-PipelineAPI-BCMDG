@@ -15,6 +15,7 @@ shared/report_templates.py.
 from __future__ import annotations
 
 from shared.quality_report import QualityReport
+from shared.report_templates import DEFAULT_TOP_N_REFBANQUE_DETAIL
 from shared.report_templates import build_outliers_report_markdown as _build_outliers_report_markdown
 from shared.report_templates import build_quality_report_markdown  # noqa: F401 — ré-exporté tel quel, 100% générique
 
@@ -37,7 +38,10 @@ _OUTLIER_FIELD_ROWS = [
 ]
 
 
-def build_outliers_report_markdown(report: QualityReport, results: list) -> str:
+def build_outliers_report_markdown(
+    report: QualityReport, results: list, top_n: int = DEFAULT_TOP_N_REFBANQUE_DETAIL
+) -> str:
     return _build_outliers_report_markdown(
-        report, results, _OUTLIER_FIELD_ROWS, _CHAMP_JSON_LABELS, numeric_id_col="NumCredoc"
+        report, results, _OUTLIER_FIELD_ROWS, _CHAMP_JSON_LABELS, numeric_id_col="NumCredoc",
+        top_n=top_n,
     )

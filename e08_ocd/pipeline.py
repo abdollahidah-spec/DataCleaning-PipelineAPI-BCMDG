@@ -55,8 +55,11 @@ class E08Pipeline(BaseApiPipeline):
     def build_reports_markdown(self, results: list, quality) -> str:
         """Un seul PDF (Rapport_Qualite_Outliers_*.pdf) combinant les deux rapports —
         contenu inchangé, simplement assemblés avec un saut de page entre les deux."""
+        from shared.report_templates import DEFAULT_TOP_N_REFBANQUE_DETAIL
         from e08_ocd.reports import build_outliers_report_markdown, build_quality_report_markdown
 
         quality_md = build_quality_report_markdown(quality)
-        outliers_md = build_outliers_report_markdown(quality, results)
+        top_n = self.cfg.get("reports", {}).get("top_n_outliers_detail",
+                                                 DEFAULT_TOP_N_REFBANQUE_DETAIL)
+        outliers_md = build_outliers_report_markdown(quality, results, top_n=top_n)
         return f'{quality_md}\n\n<div style="page-break-before: always;"></div>\n\n{outliers_md}'

@@ -118,3 +118,24 @@ def test_cumulative_stats_offline_mode_uses_this_run_only(tmp_path, isolated_sta
 
     assert quality.cumulative_n_rows == 9
     assert quality.cumulative_n_outlier_rows == 6
+
+
+def test_file_mode_failure_never_sends_a_real_ko_email(tmp_path, isolated_state_dir, monkeypatch):
+    """Régression : un run `--input` (test hors ligne) qui échoue envoyait un vrai
+    email KO aux destinataires de production. Le mode fichier doit rester 100%
+    hors ligne, y compris sur le chemin d'erreur."""
+    sent = []
+
+    class _FailingPipeline(_MinimalPipeline):
+        def load_data(self, mode, override_input):
+            raise RuntimeError("source illisible")
+
+        def notify(self, *args, **kwargs):
+            sent.append(kwargs.get("status", args[0] if args else None))
+
+    pipeline = _FailingPipeline(_cfg(tmp_path), config_source="test")
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(mode="auto", override_input="un/fichier.csv")
+
+    assert sent == [], "aucune notification ne doit partir en mode fichier"

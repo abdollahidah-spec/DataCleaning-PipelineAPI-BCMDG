@@ -94,9 +94,6 @@ output:
   # local_dir (ou sous OUTPUT_BASE si défini, voir .env) ET/OU sur SharePoint si configuré.
   classification_path: "PowerBI/E11_RDCC/E11_RDCC_classification.xlsx"
 
-instructions:
-  prefill: true
-
 email:
   enabled: true
   attach_workbook_max_mb: 15

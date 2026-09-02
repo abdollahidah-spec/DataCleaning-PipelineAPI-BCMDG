@@ -159,13 +159,19 @@ class BaseApiPipeline:
 
     # ---- assemblage de la sortie -------------------------------------------------------
     def build_instructions_df(self, results: list):
-        if not self.cfg.get("instructions", {}).get("prefill", True):
-            return None
-        frames = [p.instructions_rows(r.outliers_df) for p, r in results]
-        frames = [f for f in frames if not f.empty]
-        if not frames:
-            return None
-        return pd.concat(frames, ignore_index=True)
+        """
+        Onglet "Instructions" = HISTORIQUE, en lecture seule, des corrections
+        manuelles déjà appliquées via `{api}/apply_corrections.py` (un fichier
+        d'historique par API, voir shared/corrections_history.py).
+
+        Vide au tout premier run — personne n'a encore soumis de correction — puis
+        s'enrichit à chaque `apply_corrections`. Ce n'est donc PAS une liste
+        pré-remplie d'outliers à corriger : les valeurs à valider se lisent dans
+        les feuilles de classification (lignes `OUTLIER`) et dans le rapport PDF.
+        """
+        from shared.corrections_history import load_history_df
+
+        return load_history_df(self.api_id)
 
     def assemble_output_workbook(self, results: list, instructions_df) -> dict:
         """
@@ -323,7 +329,11 @@ class BaseApiPipeline:
         if report_md is None:
             return []
 
-        out_dir = self._resolve_output_dir()
+        # Sous-dossier "Rapport" dédié — SÉPARÉ du classeur de classification
+        # (write_output()). Le PDF est daté et s'accumule à chaque run ; le
+        # classeur, lui, reste seul, jamais daté/déplacé, branché au BI (voir
+        # write_output() et _resolve_output_dir()).
+        out_dir = self._resolve_output_dir() / "Rapport"
         out_dir.mkdir(parents=True, exist_ok=True)
         date_tag = run_dt.strftime("%Y%m%d")
 
@@ -341,6 +351,15 @@ class BaseApiPipeline:
 
     # ---- écriture / distribution -------------------------------------------------------
     def write_output(self, sheets: dict, run_dt: datetime) -> Path:
+        """
+        Chemin et nom de fichier FIXES (`{api_id}_classification.xlsx`, jamais daté,
+        jamais déplacé) — le fichier lui-même n'est jamais supprimé/recréé sous un
+        autre nom, seul son CONTENU est actualisé (écrasé) à chaque run. Essentiel
+        pour un branchement Power BI stable : le point de connexion ne doit jamais
+        changer. Les feuilles de classification catégorielles sont cumulatives
+        (référentiel + cache, voir CategoricalFieldProcessor) donc aucune valeur
+        déjà connue ne disparaît d'un run à l'autre même si absente du delta.
+        """
         out_dir = self._resolve_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -432,12 +451,19 @@ class BaseApiPipeline:
             self.logger.exception("=== Échec %s ===", self.api_id)  # trace complète -> log uniquement, jamais l'email
             self.logger.error("Statut : KO")
             self.logger.error("Durée totale : %s", format_duration_mmss((run_finished_at - started_at).total_seconds()))
-            if not override_input:
-                try:
-                    fallback_mode = mode if mode in ("initial", "incremental") else "incremental"
-                    self.persist_state(fallback_mode, "KO", None, 0, 0)
-                except Exception:
-                    self.logger.exception("Échec enregistrement état KO")
+            # Mode fichier local (--input) : 100% hors ligne, y compris en cas
+            # d'échec. Ni état incrémental, ni email — un test offline qui plante
+            # ne doit pas envoyer un vrai email KO aux destinataires de prod
+            # (constaté en test : un `--input` en erreur notifiait la boîte métier).
+            if override_input:
+                self.logger.info("[mode fichier] Notification KO ignorée (exécution hors ligne)")
+                raise
+
+            try:
+                fallback_mode = mode if mode in ("initial", "incremental") else "incremental"
+                self.persist_state(fallback_mode, "KO", None, 0, 0)
+            except Exception:
+                self.logger.exception("Échec enregistrement état KO")
             try:
                 self.notify("KO", None, error=str(exc), exc=exc, dry_run=dry_run)
             except Exception:

@@ -16,11 +16,11 @@ inventée). Contrairement à nature_economique, PAS d'embedding sémantique loca
 (mpnet) ni d'Ollama — uniquement Claude, cohérent avec le reste du repo.
 
 COLONNES AJOUTÉES :
-  Produits_clean       — valeur nettoyée (accents supprimés, espaces réduits, majuscules)
-  Produits_Normalisé   — Libelle du référentiel / 'NA' / 'OUTLIER'
-  Produits_Categorie   — Categorie associée au Libelle normalisé (lookup, vide si NA/OUTLIER)
-  Produits_method       — 'MAP' / 'NOISE' / 'WARM' / 'CLAUDE' / 'NA' / 'OUTLIER'
-  Produits_check        — True si OUTLIER
+  Produit_clean       — valeur nettoyée (accents supprimés, espaces réduits, majuscules)
+  Produit_Normalisé   — Libelle du référentiel / 'NA' / 'OUTLIER'
+  Produit_Categorie   — Categorie associée au Libelle normalisé (lookup, vide si NA/OUTLIER)
+  Produit_method       — 'MAP' / 'NOISE' / 'WARM' / 'CLAUDE' / 'NA' / 'OUTLIER'
+  Produit_check        — True si OUTLIER
 
 RÈGLE NA — témoin NumCredoc (même convention que les autres champs E08_OCD) :
   Produits == 'NA'  ET  NumCredoc == 'NA'   → 'NA'
@@ -159,7 +159,7 @@ def treating_produits(
 
     unique_vals = df[produit_col].dropna().unique()
     clean_map   = {v: clean_produits(v) for v in unique_vals}
-    df["Produits_clean"] = df[produit_col].map(clean_map).fillna("")
+    df["Produit_clean"] = df[produit_col].map(clean_map).fillna("")
 
     result_map: dict = {}          # v -> (libelle_ou_OUTLIER_ou_NA, method)
     to_resolve_claude: dict = {}
@@ -228,25 +228,25 @@ def treating_produits(
             lbl = claude_resultats.get(clean_map[v])
             result_map[v] = (lbl, "CLAUDE") if lbl else ("OUTLIER", "OUTLIER")
 
-    df["Produits_Normalisé"] = df[produit_col].map(lambda v: result_map.get(v, (None, None))[0])
-    df["Produits_method"]    = df[produit_col].map(lambda v: result_map.get(v, (None, None))[1])
-    df["_ws_hit"] = df["Produits_method"] == "WARM"
+    df["Produit_Normalisé"] = df[produit_col].map(lambda v: result_map.get(v, (None, None))[0])
+    df["Produit_method"]    = df[produit_col].map(lambda v: result_map.get(v, (None, None))[1])
+    df["_ws_hit"] = df["Produit_method"] == "WARM"
 
     if ref_col in df.columns:
         fixed = df.apply(
             lambda row: apply_na_rule(
-                row, produit_col, ref_col, "Produits_Normalisé", "Produits_method"
+                row, produit_col, ref_col, "Produit_Normalisé", "Produit_method"
             ),
             axis=1,
             result_type="expand",
         )
-        df["Produits_Normalisé"] = fixed[0]
-        df["Produits_method"]    = fixed[1]
+        df["Produit_Normalisé"] = fixed[0]
+        df["Produit_method"]    = fixed[1]
 
-    df["Produits_Categorie"] = df["Produits_Normalisé"].map(
+    df["Produit_Categorie"] = df["Produit_Normalisé"].map(
         lambda v: ref.libelle_vers_categorie.get(v, "")
     )
-    df["Produits_check"] = df["Produits_Normalisé"] == "OUTLIER"
+    df["Produit_check"] = df["Produit_Normalisé"] == "OUTLIER"
     return df
 
 

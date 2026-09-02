@@ -15,13 +15,20 @@ from xhtml2pdf import pisa
 
 _CSS = """
 <style>
+  @page { size: A4 portrait; margin: 1.4cm 1.2cm; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #1a1a1a; }
   h1 { font-size: 16pt; margin-bottom: 4pt; }
   h2 { font-size: 12.5pt; margin-top: 14pt; margin-bottom: 4pt; }
+  h3 { font-size: 10.5pt; margin-top: 11pt; margin-bottom: 3pt; color: #1a3d6d; }
   p { margin: 3pt 0; }
-  table { border-collapse: collapse; width: 100%; margin: 6pt 0 12pt 0; }
-  th, td { border: 0.5pt solid #999999; padding: 4pt 6pt; text-align: left; font-size: 9pt; }
-  th { background-color: #e8e8e8; }
+  table { border-collapse: collapse; width: 100%; margin: 4pt 0 10pt 0; }
+  /* Padding serré + police réduite : un tableau de détail doit tenir un maximum
+     de lignes par page, sinon 20 outliers occupent 3 pages (retour testeur). */
+  th, td { border: 0.5pt solid #b0b0b0; padding: 2.5pt 4pt; text-align: left;
+           font-size: 8.5pt; vertical-align: top; }
+  th { background-color: #dce6f1; font-weight: bold; }
+  td.num, th.num { text-align: right; }
+  tr.alt td { background-color: #f4f6f8; }
   em { color: #444444; }
 </style>
 """

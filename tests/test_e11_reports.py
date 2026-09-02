@@ -114,12 +114,14 @@ def test_outliers_report_field_breakdown_matches_ba_template_rows():
     ):
         assert label in md
 
-    assert "| nomCorrespondant | 3 |" in md
-    assert "| soldeDebutJournee | 1 |" in md      # TEMPORAL_CONTINUITY
-    assert "| soldeFinJournee | 2 |" in md         # ARITHMETIC + NO_ACTIVITY_CONFORMITY
-    assert "| dateFinJournee | 1 |" in md          # DATE_VALIDITY
-    assert "| totalMvtsDebiteursJournee | 0 |" in md
-    assert "**Total** | **7**" in md               # 3+0+1+0+0+2+1
+    # Tableaux rendus en HTML (largeurs de colonnes explicites) — voir
+    # shared/report_templates.py::_html_table.
+    assert '<td>nomCorrespondant</td><td class="num">3</td>' in md
+    assert '<td>soldeDebutJournee</td><td class="num">1</td>' in md      # TEMPORAL_CONTINUITY
+    assert '<td>soldeFinJournee</td><td class="num">2</td>' in md         # ARITHMETIC + NO_ACTIVITY_CONFORMITY
+    assert '<td>dateFinJournee</td><td class="num">1</td>' in md          # DATE_VALIDITY
+    assert '<td>totalMvtsDebiteursJournee</td><td class="num">0</td>' in md
+    assert '<td>TOTAL</td><td class="num">7</td>' in md                    # 3+0+1+0+0+2+1
 
 
 def test_outliers_report_refbanque_detail_includes_categorical_and_numeric():
@@ -132,3 +134,31 @@ def test_outliers_report_refbanque_detail_includes_categorical_and_numeric():
 def test_outliers_report_no_truncation_note_under_top_n():
     md = build_outliers_report_markdown(_quality_report(), _results())
     assert "occurrences les plus fréquentes" not in md
+
+
+def test_pdf_cells_are_sanitized_for_readability():
+    """Régression (retour testeur : "l'output dans le PDF n'est pas exploitable",
+    texte d'une colonne chevauchant la suivante). Trois causes réelles couvertes :
+    artefacts d'échappement Excel, retours ligne embarqués dans la donnée source,
+    et tokens trop longs que reportlab ne sait pas couper — la cellule débordait
+    alors sur la colonne voisine."""
+    from shared.report_templates import MAX_TOKEN_CHARS, _clean_cell
+
+    assert _clean_cell("SOCIETE DE GAZ_x000D__x000A_SOMAGAZ") == "SOCIETE DE GAZ SOMAGAZ"
+    assert _clean_cell("MIN DES FINANCES\r\nDIRECTION") == "MIN DES FINANCES DIRECTION"
+    assert _clean_cell("SOMACO   SARL") == "SOMACO SARL"
+
+    long_token = _clean_cell("A" * 80)
+    assert max(len(t) for t in long_token.split(" ")) <= MAX_TOKEN_CHARS
+
+
+def test_pdf_cells_escape_html_special_characters():
+    """Les valeurs sources contiennent des `&` et des chevrons (ex: "ETS X & FILS
+    <SARL>") — sans échappement, le rendu HTML->PDF est corrompu."""
+    md = build_outliers_report_markdown(_quality_report(), _results())
+    assert "<script" not in md.lower()
+
+    from shared.report_templates import _html_table
+
+    html = _html_table(["V"], ["100%"], [["ETS X & FILS <SARL>"]], numeric_cols=set())
+    assert "&amp;" in html and "&lt;SARL&gt;" in html

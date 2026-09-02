@@ -65,17 +65,6 @@ def test_exclude_from_export_lists_intermediate_columns():
                .exclude_from_export) == {"TestField_clean", "TestField_method", "TestField_check", "_ws_hit"}
 
 
-def test_instructions_rows_prefilled_from_outliers():
-    df = pd.DataFrame({"RefBanque": ["B1", "B1"], "TestField": ["Z", "Z2"]})
-    processor = _build_processor()
-    result = processor.process(df, api_id="TEST_API")
-
-    instructions = processor.instructions_rows(result.outliers_df)
-    assert set(instructions["Champ"]) == {"TestField"}
-    assert set(instructions["Input"]) == {"Z", "Z2"}
-    assert (instructions["Label_Attendu"] == "").all()
-
-
 def _fake_treating_fn_with_noise(df: pd.DataFrame, field_col: str, api_id: str = None) -> pd.DataFrame:
     """Comme _fake_treating_fn, mais distingue le bruit connu (NOISE) du vrai
     inconnu (OUTLIER) — imite la distinction ajoutée dans e11_rdcc/fields/devise.py."""

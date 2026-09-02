@@ -11,7 +11,9 @@ from pathlib import Path
 import pandas as pd
 
 EXCEL_MAX_ROWS = 1_048_576
-INSTRUCTIONS_COLS = ["Champ", "Input", "Label_Attendu"]
+# L'onglet Instructions porte l'HISTORIQUE des corrections déjà appliquées
+# (lecture seule, vide au premier run) — voir shared/corrections_history.py.
+INSTRUCTIONS_COLS = ["Date", "Champ", "Input", "Label_Attendu"]
 
 
 def empty_instructions_df() -> pd.DataFrame:

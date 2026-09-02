@@ -45,7 +45,12 @@ précalculée une seule fois pour tous les champs (voir `e11_rdcc/global_na.py` 
 - `output.local_dir` / `output.classification_path` — chemin de sortie local (sous `OUTPUT_BASE`
   si défini) et chemin SharePoint stable (écrasé à chaque run) du classeur unique de sortie.
 - `email.enabled` / `email.attach_workbook_max_mb`.
-- `instructions.prefill` — pré-remplissage automatique de l'onglet Instructions (défaut `true`).
+- `reports.top_n_outliers_detail` — nombre max de valeurs détaillées **par champ** dans le rapport
+  PDF (défaut `100` dans `shared/config_base.yaml` ; `0` = aucune limite). La liste exhaustive
+  reste dans le classeur Excel de classification.
+- L'onglet `Instructions` du classeur n'est plus pré-rempli : il porte l'**historique en lecture
+  seule** des corrections manuelles déjà appliquées (`shared/corrections_history.py`, un fichier
+  `{api}/referentiel/corrections_history_{api_id}.json` par API) — vide au tout premier run.
 - `schedule` — métadonnées uniquement (documentation de l'intention Task Scheduler), non lues
   par le code.
 

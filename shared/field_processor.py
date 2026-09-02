@@ -38,10 +38,6 @@ class FieldProcessor(ABC):
         en parallèle (voir BaseApiPipeline.process_fields)."""
         raise NotImplementedError
 
-    def instructions_rows(self, outliers_df: pd.DataFrame) -> pd.DataFrame:
-        """Pré-remplissage de la feuille Instructions (Champ/Input vides par défaut)."""
-        return pd.DataFrame(columns=["Champ", "Input", "Label_Attendu"])
-
     def apply_correction(self, api_id: str, corrections: dict) -> None:
         """Applique des corrections manuelles au cache warm-start de ce champ."""
         raise NotImplementedError(f"{self.field_name} n'a pas de cache warm-start")
@@ -121,12 +117,6 @@ class CategoricalFieldProcessor(FieldProcessor):
             stats=_categorical_stats(out, self.col_in, self.col_out, self.outlier_tag),
             sheet_names={"classification": self.field_name, "outliers": f"Outliers_{self.field_name}"},
         )
-
-    def instructions_rows(self, outliers_df: pd.DataFrame) -> pd.DataFrame:
-        if outliers_df.empty or self.col_in not in outliers_df.columns:
-            return pd.DataFrame(columns=["Champ", "Input", "Label_Attendu"])
-        vals = sorted(outliers_df[self.col_in].dropna().unique().tolist(), key=str)
-        return pd.DataFrame({"Champ": self.field_name, "Input": vals, "Label_Attendu": ""})
 
     def apply_correction(self, api_id: str, corrections: dict) -> None:
         if self.save_warm_start_fn is None:

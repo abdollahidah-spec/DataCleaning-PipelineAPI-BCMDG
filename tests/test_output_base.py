@@ -34,6 +34,21 @@ def test_output_base_uses_uppercase_api_id_with_no_outputs_subfolder(tmp_path, m
     assert result["path"].parent == tmp_path / "E11_RDCC"
 
 
+def test_pdf_report_goes_to_dedicated_rapport_subfolder(tmp_path, monkeypatch):
+    """Le PDF (daté, s'accumule à chaque run) doit être séparé du classeur de
+    classification (stable, branché BI, jamais daté/déplacé) — retour explicite :
+    sous-dossier "Rapport" dédié, jamais le même dossier que le fichier Excel."""
+    monkeypatch.setenv("OUTPUT_BASE", str(tmp_path))
+
+    cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
+    result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
+
+    assert result["path"].parent == tmp_path / "E11_RDCC"  # classeur : PAS dans Rapport/
+    assert result["pdf_paths"], "aucun PDF généré, le test ne vérifie rien"
+    for pdf_path in result["pdf_paths"]:
+        assert pdf_path.parent == tmp_path / "E11_RDCC" / "Rapport"
+
+
 def test_output_base_empty_uses_local_dir_in_repo(monkeypatch, tmp_path_factory):
     monkeypatch.delenv("OUTPUT_BASE", raising=False)
 
@@ -44,6 +59,8 @@ def test_output_base_empty_uses_local_dir_in_repo(monkeypatch, tmp_path_factory)
         assert result["path"].resolve().is_relative_to((REPO_ROOT / "e11_rdcc" / "outputs").resolve())
     finally:
         for f in (REPO_ROOT / "e11_rdcc" / "outputs").glob("E11_RDCC_*"):
+            f.unlink(missing_ok=True)
+        for f in (REPO_ROOT / "e11_rdcc" / "outputs" / "Rapport").glob("Rapport_Qualite_Outliers_E11_RDCC_*"):
             f.unlink(missing_ok=True)
 
 
@@ -59,4 +76,6 @@ def test_output_base_set_but_empty_string_uses_local_dir_in_repo(monkeypatch):
         assert result["path"].resolve().is_relative_to((REPO_ROOT / "e11_rdcc" / "outputs").resolve())
     finally:
         for f in (REPO_ROOT / "e11_rdcc" / "outputs").glob("E11_RDCC_*"):
+            f.unlink(missing_ok=True)
+        for f in (REPO_ROOT / "e11_rdcc" / "outputs" / "Rapport").glob("Rapport_Qualite_Outliers_E11_RDCC_*"):
             f.unlink(missing_ok=True)

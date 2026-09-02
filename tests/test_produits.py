@@ -38,9 +38,9 @@ def test_clean_produits_strips_accents_and_uppercases():
 def test_treating_produits_resolves_alias_as_map():
     df = pd.DataFrame({"Produits": ["Sucres"], "RefBanque": ["B1"], "NumCredoc": ["CD1"]})
     out = treating_produits(df, ref=_ref(), api_id="TEST_API", warm_start=False, cfg={})
-    assert out["Produits_Normalisé"].iloc[0] == "sucres"
-    assert out["Produits_method"].iloc[0] == "MAP"
-    assert out["Produits_Categorie"].iloc[0] == "Produits alimentaires"
+    assert out["Produit_Normalisé"].iloc[0] == "sucres"
+    assert out["Produit_method"].iloc[0] == "MAP"
+    assert out["Produit_Categorie"].iloc[0] == "Produits alimentaires"
 
 
 def test_treating_produits_known_noise_is_tagged_noise_not_outlier():
@@ -48,21 +48,21 @@ def test_treating_produits_known_noise_is_tagged_noise_not_outlier():
     d'un vrai inconnu — même valeur normalisée (OUTLIER) mais méthode différente."""
     df = pd.DataFrame({"Produits": ["PROFORMA INVOICE"], "RefBanque": ["B1"], "NumCredoc": ["CD1"]})
     out = treating_produits(df, ref=_ref(), api_id="TEST_API", warm_start=False, cfg={})
-    assert out["Produits_Normalisé"].iloc[0] == "OUTLIER"
-    assert out["Produits_method"].iloc[0] == "NOISE"
+    assert out["Produit_Normalisé"].iloc[0] == "OUTLIER"
+    assert out["Produit_method"].iloc[0] == "NOISE"
 
 
 def test_treating_produits_na_rule_legit_when_ref_also_na():
     df = pd.DataFrame({"Produits": ["NA"], "RefBanque": ["B1"], "NumCredoc": ["NA"]})
     out = treating_produits(df, ref=_ref(), api_id="TEST_API", warm_start=False, cfg={})
-    assert out["Produits_Normalisé"].iloc[0] == "NA"
-    assert out["Produits_method"].iloc[0] == "NA"
+    assert out["Produit_Normalisé"].iloc[0] == "NA"
+    assert out["Produit_method"].iloc[0] == "NA"
 
 
 def test_treating_produits_na_rule_outlier_when_ref_not_na():
     df = pd.DataFrame({"Produits": ["NA"], "RefBanque": ["B1"], "NumCredoc": ["CD1"]})
     out = treating_produits(df, ref=_ref(), api_id="TEST_API", warm_start=False, cfg={})
-    assert out["Produits_Normalisé"].iloc[0] == "OUTLIER"
+    assert out["Produit_Normalisé"].iloc[0] == "OUTLIER"
 
 
 def test_treating_produits_unresolved_value_goes_through_claude_fallback(monkeypatch, tmp_path):
@@ -82,8 +82,8 @@ def test_treating_produits_unresolved_value_goes_through_claude_fallback(monkeyp
 
     df = pd.DataFrame({"Produits": ["Nouveau produit inconnu"], "RefBanque": ["B1"], "NumCredoc": ["CD1"]})
     out = treating_produits(df, ref=_ref(), api_id="TEST_API", warm_start=False, cfg={})
-    assert out["Produits_Normalisé"].iloc[0] == "riz"
-    assert out["Produits_method"].iloc[0] == "CLAUDE"
+    assert out["Produit_Normalisé"].iloc[0] == "riz"
+    assert out["Produit_method"].iloc[0] == "CLAUDE"
 
 
 def test_treating_produits_claude_technical_failure_is_not_cached(monkeypatch, tmp_path):
@@ -96,5 +96,5 @@ def test_treating_produits_claude_technical_failure_is_not_cached(monkeypatch, t
 
     df = pd.DataFrame({"Produits": ["Truc jamais vu"], "RefBanque": ["B1"], "NumCredoc": ["CD1"]})
     out = treating_produits(df, ref=_ref(), api_id="TEST_API", warm_start=True, cfg={})
-    assert out["Produits_Normalisé"].iloc[0] == "OUTLIER"
+    assert out["Produit_Normalisé"].iloc[0] == "OUTLIER"
     assert not (tmp_path / "validated_classif_produits_test_api.json").exists()

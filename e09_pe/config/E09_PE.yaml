@@ -63,9 +63,6 @@ output:
   # Devise + Anomalies_Echeances + Instructions.
   classification_path: "PowerBI/E09_PE/E09_PE_classification.xlsx"
 
-instructions:
-  prefill: true
-
 email:
   enabled: true
   attach_workbook_max_mb: 15
