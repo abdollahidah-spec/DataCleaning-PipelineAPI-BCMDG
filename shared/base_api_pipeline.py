@@ -292,10 +292,38 @@ class BaseApiPipeline:
             else:
                 name = r.sheet_names.get("outliers", f"Anomalies_{p.field_name}")
                 cols = p.sheet_columns()
-                sheets[name] = r.outliers_df[[c for c in cols if c in r.outliers_df.columns]] \
+                df = r.outliers_df[[c for c in cols if c in r.outliers_df.columns]] \
                     if cols else r.outliers_df
+                sheets[name] = self._cap_anomaly_sheet(name, df)
         sheets["Instructions"] = instructions_df if instructions_df is not None else empty_instructions_df()
         return sheets
+
+    def _cap_anomaly_sheet(self, sheet_name: str, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Plafonne le nombre de lignes d'anomalies écrites dans l'onglet Excel et
+        déverse le détail INTÉGRAL dans un CSV à côté du classeur.
+
+        Aucune donnée n'est perdue : le CSV contient tout. Motif — l'écriture
+        Excel coûte environ 2 minutes par 2,4 M cellules quel que soit le moteur
+        (mesuré : pandas et xlsxwriter direct sont équivalents), un onglet de
+        plusieurs millions de lignes dépasse la limite d'Excel (1 048 576) et
+        n'est de toute façon pas exploitable pour une validation métier.
+        """
+        cap = (self.cfg.get("reports", {}) or {}).get("max_anomaly_rows_excel") or 0
+        if not cap or len(df) <= cap:
+            return df
+
+        out_dir = self._resolve_output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = out_dir / f"{self.api_id}_{sheet_name}_complet.csv"
+        df.to_csv(csv_path, index=False, sep=";", encoding="utf-8-sig")
+
+        self.logger.warning(
+            "Onglet '%s' : %s lignes d'anomalies — l'onglet Excel n'en garde que %s "
+            "(écriture Excel prohibitive au-delà). Détail intégral : %s",
+            sheet_name, f"{len(df):,}".replace(",", " "), f"{cap:,}".replace(",", " "), csv_path,
+        )
+        return df.head(cap)
 
     def build_extraction_frame(self, results: list, df_final: pd.DataFrame) -> pd.DataFrame:
         """Exclut les colonnes intermédiaires ; réinsère chaque {col_out} juste

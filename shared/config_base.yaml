@@ -35,6 +35,13 @@ reports:
   # Initial Load remontant des milliers d'outliers ; la liste exhaustive reste
   # de toute façon dans le classeur Excel de classification.
   top_n_outliers_detail: 100
+  # Nombre max de lignes d'anomalies écrites dans un onglet Excel. Au-delà,
+  # l'onglet garde cet extrait et le détail INTÉGRAL part dans un CSV à côté du
+  # classeur (aucune donnée perdue). Motif : l'écriture Excel coûte ~2 min par
+  # 2,4 M cellules quel que soit le moteur (mesuré), et un onglet de plusieurs
+  # millions de lignes dépasse la limite d'Excel tout en étant inexploitable.
+  # 0 = aucune limite.
+  max_anomaly_rows_excel: 200000
 
 email:
   enabled: true

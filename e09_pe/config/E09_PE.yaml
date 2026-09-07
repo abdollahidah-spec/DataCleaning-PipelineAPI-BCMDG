@@ -22,6 +22,13 @@ load:
   # Task Scheduler, pour que le premier run automatisé soit un vrai Incremental
   # Load (voir shared/state_store.py).
 
+  # La table compte 5 117 380 lignes d'historique (mesuré le 07/09/2026). Tout
+  # reprendre coûte plusieurs heures pour des échéances prévisionnelles anciennes,
+  # non actionnables par le métier. L'Initial Load démarre donc au 01/01/2024 ;
+  # les runs incrémentaux suivants ne traitent que le delta.
+  # Vider cette clé pour reprendre l'intégralité de l'historique.
+  initial_since: 2024-01-01
+
 columns:
   ref_banque: "RefBanque"
 
