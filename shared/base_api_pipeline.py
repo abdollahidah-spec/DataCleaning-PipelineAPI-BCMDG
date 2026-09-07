@@ -23,7 +23,7 @@ ad hoc `e11_rdcc/ad_hoc_extraction.py` pour les extractions sur mesure.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +33,26 @@ from shared.field_processor import CategoricalFieldProcessor, FieldProcessor, Fi
 from shared.logging_conf import get_logger
 from shared.quality_report import QualityReport, compute_quality_report
 from shared.writer import empty_instructions_df, write_excel_sheets
+
+
+def _parse_initial_since(value) -> Optional[datetime]:
+    """`load.initial_since` du YAML : borne l'Initial Load à partir d'une date
+    (chaîne ISO "AAAA-MM-JJ", ou date/datetime déjà typée par le parseur YAML).
+    None/absent = tout l'historique, comportement d'origine."""
+    if value in (None, "", False):
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    try:
+        return datetime.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        from shared.errors import ConfigError
+        raise ConfigError(
+            f"'load.initial_since' invalide : {value!r} — attendu une date au format "
+            f"AAAA-MM-JJ (ex: 2024-01-01), ou vide pour tout l'historique."
+        ) from exc
 
 
 class BaseApiPipeline:
@@ -90,8 +110,17 @@ class BaseApiPipeline:
         from shared.state_store import get_run_state
         return get_run_state(self.api_id)
 
+    def _load_progress(self):
+        """Journalise l'avancement d'un chargement par paquets — sans ça, un
+        Initial Load volumineux reste totalement muet pendant des heures
+        (problème constaté en recette sur E09)."""
+        def _report(n_rows: int) -> None:
+            self.logger.info("  ... %s lignes chargées", f"{n_rows:,}".replace(",", " "))
+        return _report
+
     def load_data(self, mode: str, override_input: Optional[str]) -> tuple[pd.DataFrame, str]:
-        from shared.db_connector import load_file, load_table, load_table_delta
+        from shared.db_connector import existing_columns, load_file, load_table, load_table_delta
+        from shared.query_columns import projection_for, reconcile_with_table
 
         if override_input:
             df = load_file(override_input, self.cfg)
@@ -99,14 +128,42 @@ class BaseApiPipeline:
 
         table = self.cfg["input"]["table_name"]
         dt_cr_col = self.cfg["input"].get("dt_cr_column", "dtCr")
+        load_cfg = self.cfg.get("load", {}) or {}
+        columns = projection_for(self.cfg)
+        chunk_size = load_cfg.get("chunk_size") or None
 
         resolved_mode = mode
         if resolved_mode == "auto":
             state = self._get_state()
             resolved_mode = "incremental" if (state and state.last_dtcr_processed) else "initial"
 
+        self.logger.info("Table source : %s", table)
+
+        # Confrontation au schéma réel AVANT la requête principale : évite un
+        # échec "Invalid column name" sur une colonne optionnelle absente, et
+        # signale tout de suite un écart YAML/table plutôt qu'après plusieurs
+        # minutes de traitement.
+        if columns:
+            available = existing_columns(table)
+            if available:
+                columns, absentes = reconcile_with_table(self.cfg, columns, available)
+                if absentes:
+                    self.logger.warning(
+                        "Colonne(s) configurée(s) mais absente(s) de la table, ignorée(s) : %s",
+                        ", ".join(absentes))
+
+        self.logger.info("Colonnes rapatriées : %s",
+                          f"{len(columns)} ({', '.join(columns)})" if columns else "toutes (SELECT *)")
+
         if resolved_mode == "initial":
-            df = load_table(table)
+            since = _parse_initial_since(load_cfg.get("initial_since"))
+            if since is not None:
+                self.logger.info("Historique borné à partir de %s (load.initial_since)",
+                                  since.date().isoformat())
+            self.logger.info("Chargement initial en cours (peut être long selon le volume)…")
+            df = load_table(table, columns=columns, chunk_size=chunk_size,
+                            progress=self._load_progress() if chunk_size else None,
+                            dt_cr_col=dt_cr_col, since=since)
         elif resolved_mode == "incremental":
             state = self._get_state()
             since = state.last_dtcr_processed if state else None
@@ -115,7 +172,9 @@ class BaseApiPipeline:
                     f"Mode incremental demandé mais aucun état trouvé pour {self.api_id} "
                     f"— lancer --mode initial une première fois."
                 )
-            df = load_table_delta(table, dt_cr_col, since)
+            self.logger.info("Chargement du delta depuis %s…", since)
+            df = load_table_delta(table, dt_cr_col, since, columns=columns, chunk_size=chunk_size,
+                                   progress=self._load_progress() if chunk_size else None)
         else:
             raise ValueError(f"Mode inconnu : {resolved_mode!r}")
 

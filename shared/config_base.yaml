@@ -10,6 +10,15 @@ input:
   encoding: "utf-8-sig"
   sheet:    0
 
+load:
+  # Lecture par paquets : donne une progression dans les logs pendant un
+  # chargement long, au lieu d'un silence total (problème constaté sur l'Initial
+  # Load d'E09). 0 / vide = lecture en un seul bloc, comme avant.
+  chunk_size: 50000
+  # Borne l'Initial Load à partir de cette date (AAAA-MM-JJ) au lieu de
+  # rapatrier tout l'historique. Vide = tout l'historique.
+  initial_since:
+
 output:
   format: "csv"
 

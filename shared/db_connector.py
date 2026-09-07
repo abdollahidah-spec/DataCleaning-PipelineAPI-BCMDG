@@ -67,7 +67,16 @@ def get_engine():
     return create_engine(url)
 
 
-def _run_query(query, params: Optional[dict], operation: str, table_name: str) -> pd.DataFrame:
+def _select_clause(columns: Optional[list]) -> str:
+    """Projection explicite des colonnes, ou `*` si non déterminée (voir
+    shared/query_columns.py) — évite de rapatrier des colonnes inutilisées."""
+    if not columns:
+        return "*"
+    return ", ".join(f"[{c}]" for c in columns)
+
+
+def _run_query(query, params: Optional[dict], operation: str, table_name: str,
+                chunk_size: Optional[int] = None, progress=None) -> pd.DataFrame:
     from sqlalchemy.exc import SQLAlchemyError
 
     host = os.getenv("DB_HOST")
@@ -75,7 +84,19 @@ def _run_query(query, params: Optional[dict], operation: str, table_name: str) -
     db = os.getenv("DB_NAME", "DATAWAREHOUSE_SA_PROD")
     try:
         with get_engine().connect() as conn:
-            df = pd.read_sql(query, conn, params=params or {})
+            if chunk_size:
+                # Lecture par paquets : donne une progression pendant un
+                # chargement long (sinon aucun retour pendant des heures) et
+                # évite de garder un seul résultat géant côté curseur.
+                frames, total = [], 0
+                for chunk in pd.read_sql(query, conn, params=params or {}, chunksize=chunk_size):
+                    frames.append(chunk)
+                    total += len(chunk)
+                    if progress:
+                        progress(total)
+                df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            else:
+                df = pd.read_sql(query, conn, params=params or {})
     except DataSourceError:
         raise
     except SQLAlchemyError as exc:
@@ -96,30 +117,63 @@ def _run_query(query, params: Optional[dict], operation: str, table_name: str) -
     return df
 
 
-def load_table(table_name: str) -> pd.DataFrame:
-    """Charge toutes les colonnes d'une table SQL Server (Initial Load — historique complet)."""
+def existing_columns(table_name: str) -> set:
+    """
+    Colonnes réellement présentes dans la table (INFORMATION_SCHEMA) — requête de
+    métadonnées, quasi instantanée. Permet de ne jamais demander une colonne
+    absente (échec `Invalid column name`) et de signaler immédiatement un écart
+    entre le YAML et le schéma réel, au lieu d'échouer bien plus tard.
+    """
+    from sqlalchemy import text
+
+    query = text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :t")
+    df = _run_query(query, {"t": table_name}, "la lecture du schéma", table_name)
+    return set(df["COLUMN_NAME"]) if not df.empty else set()
+
+
+def load_table(table_name: str, columns: Optional[list] = None, chunk_size: Optional[int] = None,
+                progress=None, dt_cr_col: Optional[str] = None,
+                since: Optional[datetime] = None) -> pd.DataFrame:
+    """
+    Initial Load. `columns` restreint la projection (défaut : toutes) ;
+    `chunk_size` active la lecture par paquets avec progression ; `since` borne
+    l'historique rapatrié (`load.initial_since` du YAML) — utile quand la table
+    remonte plusieurs années dont le métier n'a pas besoin.
+    """
     from sqlalchemy import text
 
     db = os.getenv("DB_NAME", "DATAWAREHOUSE_SA_PROD")
-    query = text(f"SELECT * FROM [{db}].[dbo].[{table_name}]")
-    return _run_query(query, None, "la lecture complète (Initial Load)", table_name)
+    select = _select_clause(columns)
+    params = None
+    where = ""
+    if since is not None and dt_cr_col:
+        where = f" WHERE [{dt_cr_col}] >= :since"
+        params = {"since": since}
+    query = text(f"SELECT {select} FROM [{db}].[dbo].[{table_name}]{where}")
+    return _run_query(query, params, "la lecture complète (Initial Load)", table_name,
+                       chunk_size=chunk_size, progress=progress)
 
 
-def load_table_delta(table_name: str, dt_cr_col: str, since: Optional[datetime]) -> pd.DataFrame:
+def load_table_delta(table_name: str, dt_cr_col: str, since: Optional[datetime],
+                      columns: Optional[list] = None, chunk_size: Optional[int] = None,
+                      progress=None) -> pd.DataFrame:
     """
     Charge uniquement les lignes ajoutées depuis `since` (Incremental Load).
     `since=None` -> équivalent à un load_table() complet (aucun filtre).
+    Même projection de colonnes et même lecture par paquets que load_table().
     """
     from sqlalchemy import text
 
     db = os.getenv("DB_NAME", "DATAWAREHOUSE_SA_PROD")
+    select = _select_clause(columns)
     if since is None:
-        query = text(f"SELECT * FROM [{db}].[dbo].[{table_name}]")
+        query = text(f"SELECT {select} FROM [{db}].[dbo].[{table_name}]")
         params = {}
     else:
-        query = text(f"SELECT * FROM [{db}].[dbo].[{table_name}] WHERE [{dt_cr_col}] > :since")
+        query = text(f"SELECT {select} FROM [{db}].[dbo].[{table_name}] WHERE [{dt_cr_col}] > :since")
         params = {"since": since}
-    return _run_query(query, params, "la lecture du delta (Incremental Load)", table_name)
+    return _run_query(query, params, "la lecture du delta (Incremental Load)", table_name,
+                       chunk_size=chunk_size, progress=progress)
 
 
 def load_query(query: str) -> pd.DataFrame:
