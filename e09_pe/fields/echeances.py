@@ -176,6 +176,84 @@ def check_date_validity_row(row, cfg: EcheancesConfig) -> dict:
 # uniquement sur le sous-ensemble anomal via .iterrows())
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _col_or_blank(df: pd.DataFrame, col: str, index) -> pd.Series:
+    """Colonne restreinte aux lignes voulues, ou chaîne vide si elle est absente —
+    équivalent vectorisé de `row.get(col, "")`."""
+    if col in df.columns:
+        return df.loc[index, col]
+    return pd.Series("", index=index)
+
+
+def _anomaly_frame(df: pd.DataFrame, cfg: EcheancesConfig, mask, rule: str,
+                    details: pd.Series) -> pd.DataFrame:
+    """Lignes d'anomalies d'une règle, construites d'un bloc (aucune boucle)."""
+    idx = df.index[mask]
+    return pd.DataFrame({
+        "NumCredoc": _col_or_blank(df, cfg.num_credoc, idx).to_numpy(),
+        "RefBanque": _col_or_blank(df, cfg.ref_banque, idx).to_numpy(),
+        "MontantEcheance": _col_or_blank(df, cfg.montant_echeance, idx).to_numpy(),
+        "DateEcheance": _col_or_blank(df, cfg.date_echeance, idx).to_numpy(),
+        "dtCr": _col_or_blank(df, cfg.dt_cr, idx).to_numpy(),
+        "Rule": rule,
+        "Detail": details.to_numpy(),
+        "Severity": "ERROR",
+    })
+
+
+def _amount_details(df: pd.DataFrame, cfg: EcheancesConfig, montant: pd.Series, mask) -> pd.Series:
+    """Texte Detail de AMOUNT_POSITIVE — même formulation que
+    check_amount_positive_row, produite pour toutes les lignes d'un coup."""
+    idx = df.index[mask]
+    brut = _col_or_blank(df, cfg.montant_echeance, idx)
+    val = montant[mask]
+    non_numerique = val.isna()
+
+    # Gardes .any() indispensables : sur une sélection vide, `Series.map()` renvoie
+    # une Series vide typée float64, et concaténer une chaîne à celle-ci lève une
+    # UFuncTypeError (attrapé par tests/test_e09_echeances.py).
+    detail = pd.Series(index=idx, dtype=object)
+    if non_numerique.any():
+        detail[non_numerique] = (
+            f"{cfg.montant_echeance} non numérique/manquant : "
+            + brut[non_numerique].map(repr)
+        )
+    if (~non_numerique).any():
+        detail[~non_numerique] = (
+            f"{cfg.montant_echeance}=" + val[~non_numerique].astype(str)
+            + " <= 0 (doit être strictement positif)"
+        )
+    return detail
+
+
+def _date_details(df: pd.DataFrame, cfg: EcheancesConfig, date_ech: pd.Series,
+                   dt_cr: pd.Series, mask) -> pd.Series:
+    """Texte Detail de DATE_VALIDITY — mêmes trois formulations que
+    check_date_validity_row (échéance non parsable / dtCr non parsable / échéance
+    non postérieure), produites de façon vectorisée."""
+    idx = df.index[mask]
+    ech, cr = date_ech[mask], dt_cr[mask]
+    ech_ko = ech.isna()
+    cr_ko = ~ech_ko & cr.isna()
+    comparaison = ~ech_ko & ~cr_ko
+
+    detail = pd.Series(index=idx, dtype=object)
+    if ech_ko.any():
+        detail[ech_ko] = (f"{cfg.date_echeance} non parsable : "
+                           + _col_or_blank(df, cfg.date_echeance, idx)[ech_ko].map(repr))
+    if cr_ko.any():
+        detail[cr_ko] = (f"{cfg.dt_cr} non parsable : "
+                          + _col_or_blank(df, cfg.dt_cr, idx)[cr_ko].map(repr))
+    if comparaison.any():
+        # .dt.date : même rendu que les objets `date` de la version scalaire
+        # ("2026-01-15" et non "2026-01-15 00:00:00").
+        detail[comparaison] = (
+            f"{cfg.date_echeance}=" + ech[comparaison].dt.date.astype(str)
+            + f" non postérieure à {cfg.dt_cr}=" + cr[comparaison].dt.date.astype(str)
+            + " (une échéance prévisionnelle doit être future)"
+        )
+    return detail
+
+
 def run_all_rules(df: pd.DataFrame, cfg: EcheancesConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Exécute les 2 règles. Retourne (df_annotated, anomalies_df). Une ligne en
     échec sur les deux règles produit deux lignes dans anomalies_df — jamais
@@ -193,22 +271,23 @@ def run_all_rules(df: pd.DataFrame, cfg: EcheancesConfig) -> tuple[pd.DataFrame,
     conforme = ~(amount_anomaly | date_anomaly)
     df["_EC_row_conforme"] = conforme.to_numpy()
 
-    # Colonnes réellement lues par les règles et par _build_anomaly_row : on ne
-    # parcourt que celles-là, sous forme de dicts (voir shared/frame_utils.py) —
-    # `iterrows()` construisait une Series par ligne anomale.
-    lues = [cfg.num_credoc, cfg.ref_banque, cfg.montant_echeance, cfg.date_echeance, cfg.dt_cr]
-
-    anomaly_rows = []
+    # Le texte Detail est construit VECTORISÉ, en réutilisant `montant`/`date_ech`/
+    # `dt_cr` déjà calculés ci-dessus. La version précédente re-parsait chaque
+    # ligne anomale valeur par valeur via to_float_safe/to_date_safe — or
+    # to_date_safe essaie jusqu'à 4 formats successifs, chaque échec levant une
+    # exception. Sur un Initial Load où presque toutes les lignes sont anomales
+    # (5,1 M lignes E09), cela représentait ~10 M de parsings scalaires, soit
+    # plusieurs heures. Les fonctions ligne-à-ligne restent disponibles comme
+    # référence unitaire (voir tests/test_e09_echeances.py).
+    frames = []
     if amount_anomaly.any():
-        for row in iter_rows_as_dicts(df.loc[amount_anomaly], lues):
-            r = check_amount_positive_row(row, cfg)
-            anomaly_rows.append(_build_anomaly_row(row, cfg, r["rule"], r["detail"]))
+        frames.append(_anomaly_frame(df, cfg, amount_anomaly, "AMOUNT_POSITIVE",
+                                      _amount_details(df, cfg, montant, amount_anomaly)))
     if date_anomaly.any():
-        for row in iter_rows_as_dicts(df.loc[date_anomaly], lues):
-            r = check_date_validity_row(row, cfg)
-            anomaly_rows.append(_build_anomaly_row(row, cfg, r["rule"], r["detail"]))
+        frames.append(_anomaly_frame(df, cfg, date_anomaly, "DATE_VALIDITY",
+                                      _date_details(df, cfg, date_ech, dt_cr, date_anomaly)))
 
-    anomalies_df = pd.DataFrame(anomaly_rows, columns=_ANOMALY_COLUMNS) if anomaly_rows \
+    anomalies_df = pd.concat(frames, ignore_index=True)[list(_ANOMALY_COLUMNS)] if frames \
         else pd.DataFrame(columns=_ANOMALY_COLUMNS)
     return df, anomalies_df
 
