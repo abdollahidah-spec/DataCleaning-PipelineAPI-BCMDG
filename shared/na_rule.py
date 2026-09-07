@@ -6,7 +6,53 @@ depuis DataCleaning-PipelineField-BCMDG/shared/base_pipeline.py::apply_na_rule).
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+
+_EMPTY_TOKENS = ("", "NAN", "NONE", "NULL")
+
+
+def apply_na_rule_frame(
+    df:        "pd.DataFrame",
+    field_col: str,
+    ref_col:   str,
+    iso_col:   str,
+    mth_col:   str,
+) -> tuple:
+    """
+    Version VECTORISÉE de `apply_na_rule` — même logique, appliquée d'un bloc sur
+    tout le DataFrame au lieu d'un appel Python par ligne.
+
+    Motivation : chaque champ catégoriel des 3 APIs appelait la règle via
+    `df.apply(..., axis=1)`, soit une fonction Python exécutée ligne par ligne sur
+    l'intégralité du jeu de données — de loin le poste le plus coûteux du
+    traitement dès que la table dépasse quelques dizaines de milliers de lignes.
+
+    L'équivalence stricte avec la version ligne à ligne est vérifiée par test
+    (tests/test_na_rule.py, comparaison sur jeu aléatoire couvrant tous les cas).
+
+    Retourne (iso: Series, method: Series), alignées sur l'index de `df`.
+    """
+    field_upper = df[field_col].astype(str).str.strip().str.upper()
+    ref_upper = df[ref_col].astype(str).str.strip().str.upper()
+    current_iso = df[iso_col]
+    current_mth = df[mth_col]
+
+    is_na_field = field_upper == "NA"
+    is_na_ref = ref_upper == "NA"
+    is_empty = field_upper.isin(_EMPTY_TOKENS)
+    is_outlier = current_iso == "OUTLIER"
+
+    # `current_mth or "OUTLIER"` de la version ligne à ligne : astype(bool)
+    # reproduit exactement la véracité Python (None/"" -> False, NaN -> True).
+    mth_if_outlier = current_mth.where(current_mth.astype(bool), "OUTLIER")
+
+    # Ordre = enchaînement des if/elif d'origine (np.select retient le 1er vrai).
+    conditions = [is_na_field & is_na_ref, is_na_field, is_empty, is_outlier]
+    iso = np.select(conditions, ["NA", "OUTLIER", "OUTLIER", "OUTLIER"], default=current_iso)
+    mth = np.select(conditions, ["NA", "OUTLIER", "OUTLIER", mth_if_outlier], default=current_mth)
+
+    return pd.Series(iso, index=df.index), pd.Series(mth, index=df.index)
 
 
 def apply_na_rule(

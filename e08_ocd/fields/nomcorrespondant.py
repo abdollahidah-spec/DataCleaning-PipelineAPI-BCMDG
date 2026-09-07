@@ -38,7 +38,7 @@ import pandas as pd
 
 from shared.claude_client import call_claude_nomcorrespondant_batch
 from shared.field_processor import CategoricalFieldProcessor
-from shared.na_rule import apply_na_rule
+from shared.na_rule import apply_na_rule_frame
 
 _REFERENTIEL_DIR = Path(__file__).parent.parent / "referentiel"
 _RE_SPACES = re.compile(r"\s+")
@@ -184,15 +184,11 @@ def treating_nomcorrespondant(
     df["_ws_hit"] = df["NomCorrespondant_method"] == "WARM"
 
     if ref_col in df.columns:
-        fixed = df.apply(
-            lambda row: apply_na_rule(
-                row, corr_col, ref_col, "NomCorrespondant_Normalisé", "NomCorrespondant_method"
-            ),
-            axis=1,
-            result_type="expand",
+        iso, mth = apply_na_rule_frame(
+            df, corr_col, ref_col, "NomCorrespondant_Normalisé", "NomCorrespondant_method"
         )
-        df["NomCorrespondant_Normalisé"] = fixed[0]
-        df["NomCorrespondant_method"]    = fixed[1]
+        df["NomCorrespondant_Normalisé"] = iso
+        df["NomCorrespondant_method"]    = mth
 
     df["NomCorrespondant_check"] = df["NomCorrespondant_Normalisé"] == "OUTLIER"
     return df

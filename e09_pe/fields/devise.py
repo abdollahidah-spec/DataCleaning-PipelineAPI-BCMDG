@@ -33,7 +33,7 @@ from pathlib import Path
 import pandas as pd
 
 from shared.field_processor import CategoricalFieldProcessor
-from shared.na_rule import apply_na_rule
+from shared.na_rule import apply_na_rule_frame
 
 _REFERENTIEL_DIR = Path(__file__).parent.parent / "referentiel"
 _RE_FLOAT_SUF = re.compile(r"\.0+$")
@@ -182,15 +182,11 @@ def treating_devise(
     df["_ws_hit"] = df["Devise_method"] == "WARM"
 
     if ref_col in df.columns:
-        fixed = df.apply(
-            lambda row: apply_na_rule(
-                row, devise_col, ref_col, "Devise_Normalisée", "Devise_method"
-            ),
-            axis=1,
-            result_type="expand",
+        iso, mth = apply_na_rule_frame(
+            df, devise_col, ref_col, "Devise_Normalisée", "Devise_method"
         )
-        df["Devise_Normalisée"] = fixed[0]
-        df["Devise_method"]     = fixed[1]
+        df["Devise_Normalisée"] = iso
+        df["Devise_method"]     = mth
 
     df["Devise_check"] = df["Devise_Normalisée"] == "OUTLIER"
     return df

@@ -41,7 +41,7 @@ import pandas as pd
 
 from shared.claude_client import call_claude_beneficiaire_web_batch
 from shared.field_processor import CategoricalFieldProcessor
-from shared.na_rule import apply_na_rule
+from shared.na_rule import apply_na_rule_frame
 
 from e08_ocd.fields._entity_matching import (
     classify_local,
@@ -199,15 +199,11 @@ def treating_beneficiaire(
     df["_ws_hit"] = df["Beneficiaire_method"] == "WARM"
 
     if ref_col in df.columns:
-        fixed = df.apply(
-            lambda row: apply_na_rule(
-                row, corr_col, ref_col, "Beneficiaire_Normalisé", "Beneficiaire_method"
-            ),
-            axis=1,
-            result_type="expand",
+        iso, mth = apply_na_rule_frame(
+            df, corr_col, ref_col, "Beneficiaire_Normalisé", "Beneficiaire_method"
         )
-        df["Beneficiaire_Normalisé"] = fixed[0]
-        df["Beneficiaire_method"]    = fixed[1]
+        df["Beneficiaire_Normalisé"] = iso
+        df["Beneficiaire_method"]    = mth
 
     df["Beneficiaire_check"] = df["Beneficiaire_Normalisé"] == "OUTLIER"
     return df

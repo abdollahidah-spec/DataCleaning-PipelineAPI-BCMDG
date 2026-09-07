@@ -19,6 +19,7 @@ import re
 from html import escape
 
 from shared.field_processor import CategoricalFieldProcessor
+from shared.frame_utils import iter_rows_as_dicts
 from shared.quality_report import QualityReport, format_duration_mmss
 
 # Défaut si le YAML ne définit pas `reports.top_n_outliers_detail` (voir
@@ -133,7 +134,7 @@ def collect_refbanque_detail(results: list, champ_labels: dict, numeric_id_col: 
             if df.empty or p.ref_banque_col not in df.columns or "Nombre_OUTLIERS" not in df.columns:
                 continue
             champ = champ_labels.get(p.field_name, p.field_name)
-            for _, row in df.iterrows():
+            for row in iter_rows_as_dicts(df, [p.ref_banque_col, p.col_in, "Nombre_OUTLIERS"]):
                 rows.append((str(row[p.ref_banque_col]), champ, str(row[p.col_in]), int(row["Nombre_OUTLIERS"])))
         else:
             df = r.outliers_df
@@ -143,7 +144,7 @@ def collect_refbanque_detail(results: list, champ_labels: dict, numeric_id_col: 
             if err.empty or "RefBanque" not in err.columns or numeric_id_col not in err.columns:
                 continue
             grouped = err.groupby(["RefBanque", "Rule", numeric_id_col]).size().reset_index(name="n")
-            for _, row in grouped.iterrows():
+            for row in iter_rows_as_dicts(grouped, ["RefBanque", "Rule", numeric_id_col, "n"]):
                 champ = champ_labels.get(str(row["Rule"]), str(row["Rule"]))
                 rows.append((str(row["RefBanque"]), champ, str(row[numeric_id_col]), int(row["n"])))
     return rows

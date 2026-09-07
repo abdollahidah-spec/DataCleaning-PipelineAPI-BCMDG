@@ -52,7 +52,7 @@ import pandas as pd
 
 from shared.claude_client import call_claude_dgi_arbitrage_batch
 from shared.field_processor import CategoricalFieldProcessor
-from shared.na_rule import apply_na_rule
+from shared.na_rule import apply_na_rule_frame
 
 from e08_ocd.fields._entity_matching import (
     classify_local,
@@ -297,15 +297,11 @@ def treating_nomdonneurordre(
     df["_ws_hit"] = df["NomDonneurOrdre_method"] == "WARM"
 
     if ref_col in df.columns:
-        fixed = df.apply(
-            lambda row: apply_na_rule(
-                row, corr_col, ref_col, "NomDonneurOrdre_Normalisé", "NomDonneurOrdre_method"
-            ),
-            axis=1,
-            result_type="expand",
+        iso, mth = apply_na_rule_frame(
+            df, corr_col, ref_col, "NomDonneurOrdre_Normalisé", "NomDonneurOrdre_method"
         )
-        df["NomDonneurOrdre_Normalisé"] = fixed[0]
-        df["NomDonneurOrdre_method"]    = fixed[1]
+        df["NomDonneurOrdre_Normalisé"] = iso
+        df["NomDonneurOrdre_method"]    = mth
 
     df["NomDonneurOrdre_check"] = df["NomDonneurOrdre_Normalisé"] == "OUTLIER"
     return df

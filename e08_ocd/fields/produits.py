@@ -40,7 +40,7 @@ import pandas as pd
 
 from shared.claude_client import call_claude_match_batch
 from shared.field_processor import CategoricalFieldProcessor
-from shared.na_rule import apply_na_rule
+from shared.na_rule import apply_na_rule_frame
 
 _REFERENTIEL_DIR = Path(__file__).parent.parent / "referentiel"
 
@@ -233,15 +233,11 @@ def treating_produits(
     df["_ws_hit"] = df["Produit_method"] == "WARM"
 
     if ref_col in df.columns:
-        fixed = df.apply(
-            lambda row: apply_na_rule(
-                row, produit_col, ref_col, "Produit_Normalisé", "Produit_method"
-            ),
-            axis=1,
-            result_type="expand",
+        iso, mth = apply_na_rule_frame(
+            df, produit_col, ref_col, "Produit_Normalisé", "Produit_method"
         )
-        df["Produit_Normalisé"] = fixed[0]
-        df["Produit_method"]    = fixed[1]
+        df["Produit_Normalisé"] = iso
+        df["Produit_method"]    = mth
 
     df["Produit_Categorie"] = df["Produit_Normalisé"].map(
         lambda v: ref.libelle_vers_categorie.get(v, "")

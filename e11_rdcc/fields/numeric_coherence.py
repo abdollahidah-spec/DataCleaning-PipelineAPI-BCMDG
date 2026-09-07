@@ -43,6 +43,7 @@ from typing import Optional
 
 import pandas as pd
 
+from shared.frame_utils import iter_rows_as_dicts
 from shared.field_processor import FieldProcessor, FieldResult
 
 _NO_ACTIVITY_EPSILON = 1e-9  # bruit flottant uniquement — PAS la tolérance métier (structural check)
@@ -172,6 +173,15 @@ def _is_na_value(v) -> bool:
 
 def _is_na_series(s: pd.Series) -> pd.Series:
     return s.astype(str).str.strip().str.upper().eq("NA")
+
+
+def _colonnes_lues(cfg: NumericCoherenceConfig) -> list:
+    """Colonnes réellement consultées par les règles ligne-à-ligne et par
+    _build_anomaly_row — limite le parcours à ces seules colonnes (voir
+    shared/frame_utils.py::iter_rows_as_dicts)."""
+    return [cfg.num_compte, cfg.ref_banque, cfg.date_fin, cfg.dt_cr, cfg.solde_debut,
+            cfg.mvts_debiteurs, cfg.mvts_crediteurs, cfg.solde_fin,
+            cfg.nom_correspondant, cfg.devise]
 
 
 def _build_anomaly_row(row, cfg: NumericCoherenceConfig, rule: str, detail: str,
@@ -395,15 +405,15 @@ def run_all_rules(df: pd.DataFrame, cfg: NumericCoherenceConfig) -> tuple[pd.Dat
     # --- Construction du texte Detail — uniquement sur les sous-ensembles anomaux ---
     anomaly_rows = []
     if arithmetic_anomaly.any():
-        for _, row in df.loc[arithmetic_anomaly].iterrows():
+        for row in iter_rows_as_dicts(df.loc[arithmetic_anomaly], _colonnes_lues(cfg)):
             ar = check_arithmetic_row(row, cfg)
             anomaly_rows.append(_build_anomaly_row(row, cfg, ar["rule"], ar["detail"], ar.get("delta")))
     if no_activity_conformity_anomaly.any():
-        for _, row in df.loc[no_activity_conformity_anomaly].iterrows():
+        for row in iter_rows_as_dicts(df.loc[no_activity_conformity_anomaly], _colonnes_lues(cfg)):
             nr = check_no_activity_conformity_row(row, cfg)
             anomaly_rows.append(_build_anomaly_row(row, cfg, nr["rule"], nr["detail"]))
     if date_anomaly.any():
-        for _, row in df.loc[date_anomaly].iterrows():
+        for row in iter_rows_as_dicts(df.loc[date_anomaly], _colonnes_lues(cfg)):
             dr = check_date_validity_row(row, cfg)
             anomaly_rows.append(_build_anomaly_row(row, cfg, dr["rule"], dr["detail"]))
 

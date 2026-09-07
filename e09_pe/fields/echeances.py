@@ -31,6 +31,7 @@ from typing import Optional
 
 import pandas as pd
 
+from shared.frame_utils import iter_rows_as_dicts
 from shared.field_processor import FieldProcessor, FieldResult
 
 _ANOMALY_COLUMNS = [
@@ -192,13 +193,18 @@ def run_all_rules(df: pd.DataFrame, cfg: EcheancesConfig) -> tuple[pd.DataFrame,
     conforme = ~(amount_anomaly | date_anomaly)
     df["_EC_row_conforme"] = conforme.to_numpy()
 
+    # Colonnes réellement lues par les règles et par _build_anomaly_row : on ne
+    # parcourt que celles-là, sous forme de dicts (voir shared/frame_utils.py) —
+    # `iterrows()` construisait une Series par ligne anomale.
+    lues = [cfg.num_credoc, cfg.ref_banque, cfg.montant_echeance, cfg.date_echeance, cfg.dt_cr]
+
     anomaly_rows = []
     if amount_anomaly.any():
-        for _, row in df.loc[amount_anomaly].iterrows():
+        for row in iter_rows_as_dicts(df.loc[amount_anomaly], lues):
             r = check_amount_positive_row(row, cfg)
             anomaly_rows.append(_build_anomaly_row(row, cfg, r["rule"], r["detail"]))
     if date_anomaly.any():
-        for _, row in df.loc[date_anomaly].iterrows():
+        for row in iter_rows_as_dicts(df.loc[date_anomaly], lues):
             r = check_date_validity_row(row, cfg)
             anomaly_rows.append(_build_anomaly_row(row, cfg, r["rule"], r["detail"]))
 
