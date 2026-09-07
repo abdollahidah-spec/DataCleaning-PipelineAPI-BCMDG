@@ -181,6 +181,34 @@ class BaseApiPipeline:
         return df, resolved_mode
 
     # ---- traitement des champs -------------------------------------------------------
+    def _slice_for(self, df_raw: pd.DataFrame, processor) -> pd.DataFrame:
+        """
+        Sous-ensemble de colonnes réellement utile à ce champ. Chaque `treating_fn`
+        commence par `df.copy()` : sur des millions de lignes, copier tout le
+        DataFrame pour chaque champ (et en parallèle) multiplie la mémoire sans
+        raison. La vue restreinte reste un DataFrame pandas ordinaire, avec le
+        même index — les traitements en aval sont inchangés.
+
+        Prudence : si les colonnes attendues ne sont pas toutes identifiables, on
+        passe le DataFrame complet (comportement d'origine) plutôt que de risquer
+        une colonne manquante.
+        """
+        candidates = getattr(processor, "source_columns", None)
+        if not candidates:
+            return df_raw
+
+        # `source_columns` est une sur-approximation (elle inclut des valeurs de
+        # configuration qui ne sont pas des colonnes, comme api_id) : on ne retient
+        # que ce qui existe réellement dans le snapshot. La colonne d'entrée du
+        # champ, elle, doit être présente — sinon on repasse le DataFrame complet
+        # et on laisse le traitement échouer avec son message habituel plutôt que
+        # de masquer le problème derrière un découpage.
+        if processor.col_in not in df_raw.columns:
+            return df_raw
+
+        presentes = [c for c in candidates if c in df_raw.columns]
+        return df_raw[presentes] if presentes else df_raw
+
     def process_fields(self, df_raw: pd.DataFrame) -> tuple[pd.DataFrame, list]:
         """
         Retourne (df_final, results) où results est une liste de tuples
@@ -191,19 +219,34 @@ class BaseApiPipeline:
         s'exécutent donc en concurrence ; le reste (calculs locaux, pas d'I/O)
         s'exécute ensuite séquentiellement.
         """
+        import time
+
         categorical = [p for p in self.field_processors if isinstance(p, CategoricalFieldProcessor)]
         other = [p for p in self.field_processors if p not in categorical]
 
         results_by_processor: dict = {}
         if categorical:
+            self.logger.info("Traitement des champs catégoriels (%s) en parallèle…",
+                              ", ".join(p.field_name for p in categorical))
+            t0 = time.perf_counter()
             with ThreadPoolExecutor(max_workers=len(categorical)) as ex:
-                futures = {ex.submit(p.process, df_raw, self.api_id): p for p in categorical}
+                # Chaque champ ne reçoit que les colonnes qu'il déclare : sa copie
+                # de travail interne est d'autant plus petite, ce qui compte quand
+                # plusieurs champs s'exécutent en parallèle sur des millions de
+                # lignes (E09 : 5,1 M lignes -> plusieurs copies simultanées).
+                futures = {ex.submit(p.process, self._slice_for(df_raw, p), self.api_id): p
+                            for p in categorical}
                 for f in as_completed(futures):
                     p = futures[f]
                     results_by_processor[p] = f.result()
+                    self.logger.info("  [%s] terminé", p.field_name)
+            self.logger.info("Champs catégoriels traités en %.1f s", time.perf_counter() - t0)
 
         for p in other:
+            self.logger.info("Traitement du champ %s…", p.field_name)
+            t0 = time.perf_counter()
             results_by_processor[p] = p.process(df_raw, self.api_id)
+            self.logger.info("  [%s] terminé en %.1f s", p.field_name, time.perf_counter() - t0)
 
         combined = df_raw.copy()
         ordered_results = []
@@ -483,10 +526,21 @@ class BaseApiPipeline:
             offline = resolved_mode == "file"
             self._attach_cumulative_stats(quality, results, offline)
 
+            import time as _time
+
             instructions_df = self.build_instructions_df(results)
             sheets = self.assemble_output_workbook(results, instructions_df)
+            total_lignes = sum(len(f) for f in sheets.values())
+            self.logger.info("Écriture du classeur (%s onglets, %s lignes au total)…",
+                              len(sheets), f"{total_lignes:,}".replace(",", " "))
+            t0 = _time.perf_counter()
             local_path = self.write_output(sheets, started_at)
+            self.logger.info("Classeur écrit en %.1f s -> %s", _time.perf_counter() - t0, local_path)
+
+            self.logger.info("Génération du rapport PDF…")
+            t0 = _time.perf_counter()
             pdf_paths = self._generate_pdf_reports(results, quality, started_at)
+            self.logger.info("Rapport PDF généré en %.1f s", _time.perf_counter() - t0)
 
             if not offline:
                 dt_cr_col = self.cfg["input"].get("dt_cr_column", "dtCr")

@@ -90,6 +90,23 @@ class CategoricalFieldProcessor(FieldProcessor):
         # Sans ça, on ne verrait dans la classification que les labels du run courant.
         self.classification_fn = classification_fn
 
+    @property
+    def source_columns(self) -> list:
+        """
+        Colonnes source lues par ce champ — permet à l'orchestrateur de ne lui
+        transmettre que celles-là (voir BaseApiPipeline._slice_for), au lieu d'une
+        copie du DataFrame entier par champ et par thread.
+
+        Inclut les colonnes passées en `treating_kwargs` (nom de colonne d'entrée,
+        témoin de la règle NA, colonne NIF...) : ce sont exactement les colonnes
+        que la fonction de traitement va consulter.
+        """
+        cols = {self.col_in, self.ref_banque_col}
+        for value in self.treating_kwargs.values():
+            if isinstance(value, str) and value.strip():
+                cols.add(value)
+        return sorted(cols)
+
     def process(self, df: pd.DataFrame, api_id: str) -> FieldResult:
         from shared.build_tables import build_classification_table, build_tables
 
