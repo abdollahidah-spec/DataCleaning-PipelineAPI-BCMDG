@@ -41,9 +41,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
-from shared.frame_utils import iter_rows_as_dicts
 from shared.field_processor import FieldProcessor, FieldResult
 
 _NO_ACTIVITY_EPSILON = 1e-9  # bruit flottant uniquement — PAS la tolérance métier (structural check)
@@ -301,22 +301,26 @@ def check_temporal_continuity(df: pd.DataFrame, cfg: NumericCoherenceConfig,
     working["_solde_fin_num"] = _to_float_series(working[cfg.solde_fin])
     working["_solde_debut_num"] = _to_float_series(working[cfg.solde_debut])
 
-    anomalies = []
+    frames_dup = []
 
     # Doublons (même compte + même date) — détectés sur tout le working set en une passe.
     dup_report_mask = working.duplicated(subset=group_cols + ["_parsed_date"], keep=False)
     if dup_report_mask.any():
-        dup_subset = working.loc[dup_report_mask].sort_values(group_cols + ["_parsed_date"])
-        for _, cluster in dup_subset.groupby(group_cols + ["_parsed_date"], dropna=False):
-            first_row = cluster.iloc[0]
-            anomalies.append(_build_anomaly_row(
-                first_row, cfg, "TEMPORAL_CONTINUITY",
-                f"{len(cluster)} lignes pour la même date {first_row['_parsed_date']} (compte ambigu)",
-                severity="ERROR",
-            ))
+        # Une ligne d'anomalie par groupe de doublons, construite d'un bloc :
+        # `transform("size")` donne la taille du groupe sur chaque ligne, et le
+        # masque "première occurrence" sélectionne le représentant du groupe.
+        # (Avant : une itération par groupe + une Series construite à chaque tour.)
+        cle = group_cols + ["_parsed_date"]
+        tailles = working.groupby(cle, dropna=False)["_parsed_date"].transform("size")
+        premier = dup_report_mask & ~working.duplicated(subset=cle, keep="first")
+        idx = working.index[premier]
+        details = (tailles[premier].astype(str) + " lignes pour la même date "
+                    + working.loc[premier, "_parsed_date"].astype(str) + " (compte ambigu)")
+        frames_dup.append(_frame(working, cfg, idx, "TEMPORAL_CONTINUITY", details))
+
         # Ne garde que le "premier" de chaque doublon (comme l'ancien drop_duplicates
         # keep="first") pour que le chaînage J/J+1 continue avec cette occurrence.
-        dup_drop_mask = working.duplicated(subset=group_cols + ["_parsed_date"], keep="first")
+        dup_drop_mask = working.duplicated(subset=cle, keep="first")
         working = working.loc[~dup_drop_mask].copy()
 
     working = working.sort_values(group_cols + ["_parsed_date"])
@@ -331,23 +335,137 @@ def check_temporal_continuity(df: pd.DataFrame, cfg: NumericCoherenceConfig,
     continuity_error = valid_pair & (delta.abs() > cfg.tolerance_abs)
     continuity_warning = valid_pair & ~continuity_error & (gap_days > 1)
 
-    for idx in working.index[continuity_error]:
-        row = working.loc[idx]
-        anomalies.append(_build_anomaly_row(
-            row, cfg, "TEMPORAL_CONTINUITY",
-            f"SoldeDebutJournee={row['_solde_debut_num']} != SoldeFinJournee(J-1)={prev_solde_fin.loc[idx]} "
-            f"(relevé précédent {prev_date.loc[idx].date()})",
-            delta=delta.loc[idx], severity="ERROR",
-        ))
-    for idx in working.index[continuity_warning]:
-        row = working.loc[idx]
-        anomalies.append(_build_anomaly_row(
-            row, cfg, "TEMPORAL_CONTINUITY",
-            f"Écart de {int(gap_days.loc[idx])} jours depuis le relevé précédent ({prev_date.loc[idx].date()})",
-            delta=0.0, severity="WARNING",
-        ))
+    # Avant : une boucle par anomalie avec QUATRE recherches .loc[idx] distinctes
+    # (ligne, solde précédent, date précédente, delta) plus la construction d'une
+    # Series à chaque tour. Tout est désormais construit d'un bloc.
+    if continuity_error.any():
+        idx = working.index[continuity_error]
+        details = ("SoldeDebutJournee=" + working.loc[idx, "_solde_debut_num"].astype(str)
+                    + " != SoldeFinJournee(J-1)=" + prev_solde_fin[idx].astype(str)
+                    + " (relevé précédent " + prev_date[idx].dt.date.astype(str) + ")")
+        frames_dup.append(_frame(working, cfg, idx, "TEMPORAL_CONTINUITY", details,
+                                  delta=delta[idx].to_numpy()))
+    if continuity_warning.any():
+        idx = working.index[continuity_warning]
+        details = ("Écart de " + gap_days[idx].astype(int).astype(str)
+                    + " jours depuis le relevé précédent ("
+                    + prev_date[idx].dt.date.astype(str) + ")")
+        frames_dup.append(_frame(working, cfg, idx, "TEMPORAL_CONTINUITY", details,
+                                  delta=0.0, severity="WARNING"))
 
-    return pd.DataFrame(anomalies, columns=_ANOMALY_COLUMNS) if anomalies else pd.DataFrame(columns=_ANOMALY_COLUMNS)
+    return pd.concat(frames_dup, ignore_index=True)[list(_ANOMALY_COLUMNS)] if frames_dup \
+        else pd.DataFrame(columns=_ANOMALY_COLUMNS)
+
+
+def _col(df: pd.DataFrame, col: str, idx) -> pd.Series:
+    """Colonne restreinte aux lignes voulues, ou chaîne vide si absente —
+    équivalent vectorisé de `row.get(col, "")`."""
+    return df.loc[idx, col] if col in df.columns else pd.Series("", index=idx)
+
+
+def _frame(df: pd.DataFrame, cfg: NumericCoherenceConfig, idx, rule: str,
+            details, delta=None, severity="ERROR") -> pd.DataFrame:
+    """Lignes d'anomalies construites d'un bloc (mêmes colonnes que
+    _build_anomaly_row, qui reste la référence ligne à ligne)."""
+    return pd.DataFrame({
+        "NumCompte": _col(df, cfg.num_compte, idx).to_numpy(),
+        "RefBanque": _col(df, cfg.ref_banque, idx).to_numpy(),
+        "DateFinJournee": _col(df, cfg.date_fin, idx).to_numpy(),
+        "dtCr": _col(df, cfg.dt_cr, idx).to_numpy(),
+        "SoldeDebutJournee": _col(df, cfg.solde_debut, idx).to_numpy(),
+        "TotalMvtsDebiteursJournee": _col(df, cfg.mvts_debiteurs, idx).to_numpy(),
+        "TotalMvtsCrediteurs": _col(df, cfg.mvts_crediteurs, idx).to_numpy(),
+        "SoldeFinJournee": _col(df, cfg.solde_fin, idx).to_numpy(),
+        "Rule": rule,
+        "Detail": np.asarray(details, dtype=object),
+        "Delta": delta if delta is not None else None,
+        "Severity": severity,
+    })
+
+
+def _noms_manquants(idx, paires) -> pd.Series:
+    """Pour chaque ligne, la liste des colonnes non numériques/manquantes, jointe
+    par ", " — équivalent vectorisé de la compréhension de check_arithmetic_row
+    (l'ordre des noms est préservé)."""
+    parts = pd.Series([""] * len(idx), index=idx, dtype=object)
+    for nom, serie in paires:
+        manquant = serie.isna()
+        if manquant.any():
+            sep = parts[manquant].where(parts[manquant] == "", parts[manquant] + ", ")
+            parts[manquant] = sep + nom
+    return parts
+
+
+def _frame_arithmetic(df, cfg, mask, missing_mask, debut, deb, cred, fin, computed, delta):
+    idx = df.index[mask]
+    manque = missing_mask[mask]
+
+    detail = pd.Series(index=idx, dtype=object)
+    if manque.any():
+        noms = _noms_manquants(idx[manque], [
+            (cfg.solde_debut, debut[mask][manque]), (cfg.mvts_debiteurs, deb[mask][manque]),
+            (cfg.mvts_crediteurs, cred[mask][manque]), (cfg.solde_fin, fin[mask][manque]),
+        ])
+        detail[manque] = "Champ(s) non numérique(s)/manquant(s) : " + noms
+    if (~manque).any():
+        ok = idx[~manque]
+        detail[~manque] = (
+            "SoldeFinJournee=" + fin[ok].astype(str)
+            + " != SoldeDebutJournee(" + debut[ok].astype(str)
+            + ") + MvtsCrediteurs(" + cred[ok].astype(str)
+            + ") - MvtsDebiteurs(" + deb[ok].astype(str)
+            + ") = " + computed[ok].astype(str)
+            + " (écart=" + delta[ok].astype(str) + ")"
+        )
+    return _frame(df, cfg, idx, "ARITHMETIC", detail, delta=delta[mask].to_numpy())
+
+
+def _frame_no_activity(df, cfg, mask, partial_na, nom_na, devise_na, num_compte_na,
+                        debut, deb, cred, fin):
+    idx = df.index[mask]
+    partielle = partial_na[mask]
+
+    detail = pd.Series(index=idx, dtype=object)
+    if partielle.any():
+        sub = idx[partielle]
+        champs = [(cfg.nom_correspondant, nom_na), (cfg.devise, devise_na)]
+        if cfg.num_compte:
+            champs.append((cfg.num_compte, num_compte_na))
+        # Colonnes identifiantes NON-NA alors que d'autres le sont.
+        non_na = _noms_manquants(sub, [(nom, ~serie[sub]) for nom, serie in champs])
+        detail[partielle] = ("NA partielle : " + non_na
+                              + " non-NA alors que d'autres champs identifiants le sont")
+    if (~partielle).any():
+        sub = idx[~partielle]
+        nonzero = _noms_manquants(sub, [
+            (c, s[sub].isna() | (s[sub].abs() > _NO_ACTIVITY_EPSILON))
+            for c, s in ((cfg.solde_debut, debut), (cfg.mvts_debiteurs, deb),
+                          (cfg.mvts_crediteurs, cred), (cfg.solde_fin, fin))
+        ])
+        detail[~partielle] = ("Ligne 'sans activité' (NA) mais champ(s) non nul(s)/non "
+                               "numérique(s) : " + nonzero)
+    return _frame(df, cfg, idx, "NO_ACTIVITY_CONFORMITY", detail)
+
+
+def _frame_date_validity(df, cfg, mask, date_fin_parsed, dt_cr_parsed):
+    idx = df.index[mask]
+    fin_ko = date_fin_parsed[mask].isna()
+    cr_ko = ~fin_ko & dt_cr_parsed[mask].isna()
+    posterieure = ~fin_ko & ~cr_ko
+
+    detail = pd.Series(index=idx, dtype=object)
+    if fin_ko.any():
+        detail[fin_ko] = (f"{cfg.date_fin} non parsable : "
+                           + _col(df, cfg.date_fin, idx)[fin_ko].map(repr))
+    if cr_ko.any():
+        detail[cr_ko] = (f"{cfg.dt_cr} non parsable : "
+                          + _col(df, cfg.dt_cr, idx)[cr_ko].map(repr))
+    if posterieure.any():
+        detail[posterieure] = (
+            f"{cfg.date_fin}=" + date_fin_parsed[idx][posterieure].dt.date.astype(str)
+            + f" postérieure à {cfg.dt_cr}=" + dt_cr_parsed[idx][posterieure].dt.date.astype(str)
+        )
+    return _frame(df, cfg, idx, "DATE_VALIDITY", detail)
 
 
 def run_all_rules(df: pd.DataFrame, cfg: NumericCoherenceConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -407,25 +525,28 @@ def run_all_rules(df: pd.DataFrame, cfg: NumericCoherenceConfig) -> tuple[pd.Dat
     df["_NC_is_no_activity_row"] = is_no_activity_row.to_numpy()
     df["_NC_row_conforme"] = conforme.to_numpy()
 
-    # --- Construction du texte Detail — uniquement sur les sous-ensembles anomaux ---
-    anomaly_rows = []
+    # --- Construction du texte Detail, VECTORISÉE ---
+    # Les colonnes numériques/dates sont déjà parsées ci-dessus : les re-parser
+    # valeur par valeur pour composer le texte (ce que faisait la version
+    # précédente) coûtait un appel Python par ligne anomale, avec des parseurs
+    # scalaires essayant plusieurs formats à coups d'exceptions. Sur un Initial
+    # Load où beaucoup de lignes sont anomales, c'était le poste dominant.
+    frames = []
     if arithmetic_anomaly.any():
-        for row in iter_rows_as_dicts(df.loc[arithmetic_anomaly], _colonnes_lues(cfg)):
-            ar = check_arithmetic_row(row, cfg)
-            anomaly_rows.append(_build_anomaly_row(row, cfg, ar["rule"], ar["detail"], ar.get("delta")))
+        frames.append(_frame_arithmetic(df, cfg, arithmetic_anomaly, arithmetic_missing,
+                                         solde_debut, mvts_deb, mvts_cred, solde_fin,
+                                         computed, arithmetic_delta))
     if no_activity_conformity_anomaly.any():
-        for row in iter_rows_as_dicts(df.loc[no_activity_conformity_anomaly], _colonnes_lues(cfg)):
-            nr = check_no_activity_conformity_row(row, cfg)
-            anomaly_rows.append(_build_anomaly_row(row, cfg, nr["rule"], nr["detail"]))
+        frames.append(_frame_no_activity(df, cfg, no_activity_conformity_anomaly, partial_na,
+                                          nom_na, devise_na, num_compte_na,
+                                          solde_debut, mvts_deb, mvts_cred, solde_fin))
     if date_anomaly.any():
-        for row in iter_rows_as_dicts(df.loc[date_anomaly], _colonnes_lues(cfg)):
-            dr = check_date_validity_row(row, cfg)
-            anomaly_rows.append(_build_anomaly_row(row, cfg, dr["rule"], dr["detail"]))
+        frames.append(_frame_date_validity(df, cfg, date_anomaly, date_fin_parsed, dt_cr_parsed))
 
     no_activity_mask = pd.Series(is_no_activity_row.to_numpy(), index=df.index)
     temporal_df = check_temporal_continuity(df, cfg, no_activity_mask)
 
-    row_anomalies_df = pd.DataFrame(anomaly_rows, columns=_ANOMALY_COLUMNS) if anomaly_rows \
+    row_anomalies_df = pd.concat(frames, ignore_index=True)[list(_ANOMALY_COLUMNS)] if frames \
         else pd.DataFrame(columns=_ANOMALY_COLUMNS)
 
     anomalies_df = pd.concat([row_anomalies_df, temporal_df], ignore_index=True) if not temporal_df.empty \
