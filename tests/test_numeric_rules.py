@@ -287,3 +287,30 @@ def test_temporal_continuity_grouping_by_numcompte_only(cfg):
     ])
     anomalies = check_temporal_continuity(df, cfg_numcompte, pd.Series([False, False, False]))
     assert anomalies.empty  # CPT_A chaîne correctement (950->950), CPT_B seul (rien à comparer)
+
+
+def test_date_validity_compare_au_jour_pas_a_l_heure():
+    """Régression : `dtCr` porte un horodatage de chargement, `DateFinJournee`
+    est une date métier. Comparer les heures faisait dépendre le verdict de
+    l'instant d'insertion en base — une clôture du jour même passait en anomalie
+    selon l'heure. La comparaison se fait désormais au jour."""
+    import pandas as pd
+
+    from e11_rdcc.fields.numeric_coherence import NumericCoherenceConfig, run_all_rules
+
+    cfg = NumericCoherenceConfig(
+        solde_debut="SoldeDebutJournee", mvts_debiteurs="TotalMvtsDebiteursJournee",
+        mvts_crediteurs="TotalMvtsCrediteurs", solde_fin="SoldeFinJournee",
+        date_fin="DateFinJournee", dt_cr="dtCr", ref_banque="RefBanque",
+        nom_correspondant="NomCorrespondant", devise="Devise", num_compte="NumCompte",
+    )
+    df = pd.DataFrame({
+        "RefBanque": ["B1"], "NomCorrespondant": ["BANQUE X"], "Devise": ["USD"],
+        "NumCompte": ["C1"], "SoldeDebutJournee": ["100"], "TotalMvtsDebiteursJournee": ["0"],
+        "TotalMvtsCrediteurs": ["0"], "SoldeFinJournee": ["100"],
+        "DateFinJournee": ["2026-09-01 18:00:00"],   # clôture du soir
+        "dtCr": ["2026-09-01 02:00:00"],              # chargement du matin, MÊME jour
+    })
+    _, anomalies = run_all_rules(df, cfg)
+    assert "DATE_VALIDITY" not in set(anomalies["Rule"]), \
+        "une clôture du jour même ne doit pas dépendre de l'heure de chargement"

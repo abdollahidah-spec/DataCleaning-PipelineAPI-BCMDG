@@ -263,8 +263,16 @@ def run_all_rules(df: pd.DataFrame, cfg: EcheancesConfig) -> tuple[pd.DataFrame,
     montant = _to_float_series(df[cfg.montant_echeance])
     amount_anomaly = montant.isna() | (montant <= 0)
 
-    date_ech = _to_date_series(df[cfg.date_echeance])
-    dt_cr = _to_date_series(df[cfg.dt_cr])
+    # Comparaison au JOUR (jour/mois/année), heure ignorée des deux côtés :
+    # `dtCr` porte un horodatage de chargement (ex: 14h23) alors que
+    # `DateEcheance` est une date métier ; comparer les heures rendait le verdict
+    # dépendant du moment d'insertion en base, sans aucun sens fonctionnel. C'est
+    # aussi ce que faisait déjà la fonction scalaire de référence to_date_safe(),
+    # qui renvoie des `date` — la décision vectorisée en diverge(ait) silencieusement.
+    # La règle reste « strictement postérieure » : une échéance tombant LE MÊME
+    # JOUR que dtCr est une anomalie.
+    date_ech = _to_date_series(df[cfg.date_echeance]).dt.normalize()
+    dt_cr = _to_date_series(df[cfg.dt_cr]).dt.normalize()
     date_missing = date_ech.isna() | dt_cr.isna()
     date_anomaly = date_missing | (date_ech <= dt_cr)
 

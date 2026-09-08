@@ -99,6 +99,34 @@ def test_equivalence_sur_jeu_aleatoire():
     _assert_same(df)
 
 
+def test_comparaison_au_jour_ignore_l_heure_de_dtcr():
+    """L'heure ne doit jamais décider du verdict : `dtCr` porte un horodatage de
+    chargement, `DateEcheance` est une date métier. Une échéance au lendemain
+    reste conforme même si l'heure de dtCr est plus tardive dans la journée."""
+    df = pd.DataFrame({
+        "NumCredoc": ["CD1", "CD2"],
+        "RefBanque": ["BMCI", "BMCI"],
+        "MontantEcheance": ["1000", "1000"],
+        "DateEcheance": ["2026-09-02 00:00:00", "2026-09-02 06:00:00"],
+        "dtCr": ["2026-09-01 23:59:59", "2026-09-01 23:59:59"],
+    })
+    _, anomalies = run_all_rules(df, CFG)
+    assert anomalies.empty, "une échéance au lendemain est conforme, quelle que soit l'heure"
+
+
+def test_meme_jour_reste_une_anomalie_quelle_que_soit_l_heure():
+    """Règle « strictement postérieure » : même jour = anomalie, y compris quand
+    l'heure de l'échéance est plus tardive que celle de dtCr (ce qui, avant la
+    comparaison au jour, passait à tort pour conforme)."""
+    df = pd.DataFrame({
+        "NumCredoc": ["CD1"], "RefBanque": ["BMCI"], "MontantEcheance": ["1000"],
+        "DateEcheance": ["2026-09-01 23:00:00"], "dtCr": ["2026-09-01 08:00:00"],
+    })
+    _, anomalies = run_all_rules(df, CFG)
+    assert len(anomalies) == 1
+    assert anomalies.iloc[0]["Rule"] == "DATE_VALIDITY"
+
+
 def test_aucune_anomalie_donne_un_tableau_vide():
     df = pd.DataFrame({
         "NumCredoc": ["CD1"], "RefBanque": ["BMCI"], "MontantEcheance": ["100"],

@@ -379,8 +379,13 @@ def run_all_rules(df: pd.DataFrame, cfg: NumericCoherenceConfig) -> tuple[pd.Dat
     arithmetic_anomaly = arithmetic_missing | (arithmetic_delta.abs() > cfg.tolerance_abs)
 
     # --- Rule 4 : DATE_VALIDITY ---
-    date_fin_parsed = _to_date_series(df[cfg.date_fin])
-    dt_cr_parsed = _to_date_series(df[cfg.dt_cr])
+    # Comparaison au JOUR, heure ignorée des deux côtés : `dtCr` porte un
+    # horodatage de chargement, `DateFinJournee` est une date métier — comparer
+    # les heures ferait dépendre le verdict de l'instant d'insertion en base.
+    # C'est déjà ce que fait la fonction scalaire de référence to_date_safe(),
+    # qui renvoie des `date` ; la décision vectorisée en divergeait.
+    date_fin_parsed = _to_date_series(df[cfg.date_fin]).dt.normalize()
+    dt_cr_parsed = _to_date_series(df[cfg.dt_cr]).dt.normalize()
     date_missing = date_fin_parsed.isna() | dt_cr_parsed.isna()
     date_anomaly = date_missing | (date_fin_parsed > dt_cr_parsed)
 
