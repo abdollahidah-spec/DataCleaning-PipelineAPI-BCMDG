@@ -27,3 +27,6 @@ req/
 # OS
 .DS_Store
 Thumbs.db
+
+# Tâche Planificateur générée localement (chemins absolus propres à la machine)
+BCM_DataCleaning_Task.xml
