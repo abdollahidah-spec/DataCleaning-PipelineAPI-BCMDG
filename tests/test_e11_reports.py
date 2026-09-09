@@ -89,20 +89,21 @@ def _results() -> list:
 def test_quality_report_markdown_has_verbatim_definitions_and_correct_numbers():
     md = build_quality_report_markdown(_quality_report())
 
-    assert "Nombre total de lignes traitées : 100" in md
-    assert "nombre total d'enregistrements (lignes) pris en compte par la pipeline sur l'ensemble de l'historique" in md
-    assert "Nombre total de valeurs distinctes traitées : 14" in md
-    assert "Nombre de valeurs distinctes normalisées : 11" in md
-    assert "Nombre de valeurs non classifiées (outliers) : 3" in md
-    assert "Taux de données conformes : 75,0 %" in md
-    assert "Taux de valeurs normalisées : 78,6 %" in md
-    assert "Nombre de valeurs déjà propres à la source : 8" in md
-    assert "Nombre de valeurs nettoyées par la pipeline (traitement réussi) : 3" in md
-    assert "Taux de valeurs déjà propres à la source : 57,1 %" in md
-    assert "Taux de valeurs nettoyées par la pipeline : 21,4 %" in md
-    assert "Taux de valeurs non classifiées (outliers) : 21,4 %" in md
-    assert "Temps total d'exécution : 00 min 42 s" in md
-    assert "rattacher une valeur normalisée à N valeurs sources" in md
+    # Format tableau : libellé + valeur + %, au lieu d'une définition longue sous
+    # chaque chiffre (demande métier : rapport lisible, pas un pavé de texte).
+    assert '<td>Lignes traitées</td><td class="num">100</td>' in md
+    assert '<td>Valeurs distinctes traitées</td><td class="num">14</td><td class="num">100,0 %</td>' in md
+    assert '<td>dont déjà propres à la source</td><td class="num">8</td><td class="num">57,1 %</td>' in md
+    assert '<td>dont nettoyées par la pipeline</td><td class="num">3</td><td class="num">21,4 %</td>' in md
+    assert '<td>dont non classifiées (outliers)</td><td class="num">3</td><td class="num">21,4 %</td>' in md
+    assert '<td>Taux de données conformes</td><td class="num">75,0 %</td>' in md
+    assert '<td>Taux de valeurs normalisées</td><td class="num">78,6 %</td>' in md
+    assert "00 min 42 s" in md
+
+    # En-tête centré + puces de lecture courtes (plus de définitions longues).
+    assert 'class="entete"' in md and "Rapport de qualité des traitements" in md
+    assert "Repères de lecture" in md
+    assert "Définition : nombre total d'enregistrements" not in md
 
 
 def test_outliers_report_field_breakdown_matches_ba_template_rows():
@@ -127,8 +128,10 @@ def test_outliers_report_field_breakdown_matches_ba_template_rows():
 def test_outliers_report_refbanque_detail_includes_categorical_and_numeric():
     md = build_outliers_report_markdown(_quality_report(), _results())
 
-    assert "Z1" in md and "B1" in md    # outlier catégoriel NomCorrespondant
-    assert "C3" in md and "B2" in md    # anomalie numérique (NumCompte comme "valeur source")
+    # La répartition par RefBanque est AGRÉGÉE : une ligne par banque, plus la
+    # liste valeur par valeur (non demandée, illisible — elle reste dans l'Excel).
+    assert '<td>B1</td>' in md and '<td>B2</td>' in md
+    assert "Z1" not in md and "C3" not in md
 
 
 def test_outliers_report_no_truncation_note_under_top_n():

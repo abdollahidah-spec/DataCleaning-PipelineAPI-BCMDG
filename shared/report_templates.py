@@ -61,59 +61,56 @@ def build_quality_report_markdown(report: QualityReport) -> str:
     # déjà propre / nettoyée avec succès par la pipeline / outlier non résolue.
     n_cleaned = n_distinct_normalized - n_already_clean
 
-    return f"""# Rapport de qualité des traitements — {report.api_id}
+    pct_total = "100,0 %"
+    volumes = _html_table(
+        ["Indicateur", "Valeur", "% du total"],
+        ["56%", "22%", "22%"],
+        [
+            ["Lignes traitées", format_int_fr(report.cumulative_n_rows), "—"],
+            ["Valeurs distinctes traitées", format_int_fr(n_distinct_total), pct_total],
+            ["dont déjà propres à la source", format_int_fr(n_already_clean),
+             format_pct_fr(report.cumulative_taux_deja_propre_pct)],
+            ["dont nettoyées par la pipeline", format_int_fr(n_cleaned),
+             format_pct_fr(report.cumulative_taux_nettoyage_pct)],
+            ["dont non classifiées (outliers)", format_int_fr(n_distinct_outliers),
+             format_pct_fr(report.cumulative_taux_outliers_distinct_pct)],
+        ],
+        numeric_cols={1, 2},
+        highlight_last=False,
+    )
 
-## Statistiques générales
+    performance = _html_table(
+        ["Indicateur de performance", "Résultat"],
+        ["70%", "30%"],
+        [
+            ["Taux de données conformes", format_pct_fr(report.cumulative_taux_conformite_pct)],
+            ["Taux de valeurs normalisées", format_pct_fr(report.cumulative_taux_normalisation_pct)],
+            ["Taux de valeurs déjà propres à la source",
+             format_pct_fr(report.cumulative_taux_deja_propre_pct)],
+            ["Temps d'exécution de ce traitement", format_duration_mmss(report.execution_time_seconds)],
+        ],
+        numeric_cols={1},
+        highlight_last=False,
+    )
 
-**Nombre total de lignes traitées : {format_int_fr(report.cumulative_n_rows)}**
+    return f"""{_titre("Rapport de qualité des traitements", report)}
 
-*Définition : nombre total d'enregistrements (lignes) pris en compte par la pipeline sur l'ensemble de l'historique disponible, tous champs confondus.*
+## Volumétrie et classification
 
-**Nombre total de valeurs distinctes traitées : {format_int_fr(n_distinct_total)}**
-
-*Définition : nombre total de valeurs uniques, après déduplication sur l'ensemble de l'historique, rencontrées dans les champs concernés avant toute opération de nettoyage ou de normalisation.*
-
-**Nombre de valeurs distinctes normalisées : {format_int_fr(n_distinct_normalized)}**
-
-*Définition : nombre total de valeurs uniques de l'ensemble de l'historique ayant été rattachées avec succès à une valeur normalisée du référentiel, selon une relation permettant de rattacher une valeur normalisée à N valeurs sources.*
-
-**Nombre de valeurs non classifiées (outliers) : {format_int_fr(n_distinct_outliers)}**
-
-*Définition : nombre total de valeurs uniques de l'ensemble de l'historique n'ayant pu être associées automatiquement à aucune valeur normalisée du référentiel et placées en attente de validation métier (outliers).*
-
-**Nombre de valeurs déjà propres à la source : {format_int_fr(n_already_clean)}**
-
-*Définition : nombre de valeurs uniques de l'ensemble de l'historique reçues du système source identiques à une valeur du référentiel — aucun traitement de nettoyage n'a été nécessaire de la part de la pipeline pour ces valeurs.*
-
-**Nombre de valeurs nettoyées par la pipeline (traitement réussi) : {format_int_fr(n_cleaned)}**
-
-*Définition : nombre de valeurs uniques de l'ensemble de l'historique ayant nécessité une opération de la pipeline (correction, alias, normalisation, résolution automatique...) et rattachées avec succès à une valeur du référentiel — exclut les valeurs déjà propres à la source et les outliers non résolus.*
+{volumes}
 
 ## Indicateurs de performance
 
-**Taux de données conformes : {format_pct_fr(report.cumulative_taux_conformite_pct)}**
+{performance}
 
-*Définition : proportion des lignes de l'ensemble de l'historique traité dont les valeurs respectent l'ensemble des règles de validation définies (formule du solde de fin de journée, cohérence temporelle des soldes, format des dates, etc.), rapportée au nombre total de lignes de l'historique traité.*
+### Repères de lecture
 
-**Taux de valeurs normalisées : {format_pct_fr(report.cumulative_taux_normalisation_pct)}**
-
-*Définition : proportion des valeurs distinctes de l'ensemble de l'historique traité ayant été rattachées avec succès à une valeur normalisée, calculée comme suit : Nombre de valeurs distinctes normalisées / Nombre total de valeurs distinctes traitées × 100.*
-
-**Taux de valeurs déjà propres à la source : {format_pct_fr(report.cumulative_taux_deja_propre_pct)}**
-
-*Définition : proportion des valeurs distinctes de l'ensemble de l'historique reçues du système source sans qu'aucun traitement de nettoyage n'ait été nécessaire, calculée comme suit : Nombre de valeurs déjà propres à la source / Nombre total de valeurs distinctes traitées × 100.*
-
-**Taux de valeurs nettoyées par la pipeline : {format_pct_fr(report.cumulative_taux_nettoyage_pct)}**
-
-*Définition : proportion des valeurs distinctes de l'ensemble de l'historique ayant nécessité un traitement de la pipeline et rattachées avec succès à une valeur du référentiel, calculée comme suit : Nombre de valeurs nettoyées par la pipeline / Nombre total de valeurs distinctes traitées × 100.*
-
-**Taux de valeurs non classifiées (outliers) : {format_pct_fr(report.cumulative_taux_outliers_distinct_pct)}**
-
-*Définition : proportion des valeurs distinctes de l'ensemble de l'historique n'ayant pu être associées automatiquement à aucune valeur normalisée du référentiel, calculée comme suit : Nombre de valeurs non classifiées (outliers) / Nombre total de valeurs distinctes traitées × 100.*
-
-**Temps total d'exécution : {format_duration_mmss(report.execution_time_seconds)}**
-
-*Définition : durée totale écoulée entre le début et la fin de l'exécution complète de la pipeline, incluant l'ensemble des étapes (extraction, prétraitement, nettoyage, normalisation, classification, génération des livrables).*
+- **Périmètre** : ensemble de l'historique traité, tous champs confondus (hors temps d'exécution, propre à ce run).
+- **Valeurs distinctes** : valeurs uniques après déduplication, avant tout nettoyage.
+- **Déjà propre** : valeur reçue identique au référentiel, aucun traitement nécessaire.
+- **Nettoyée** : valeur rattachée au référentiel après correction (alias, format, résolution automatique).
+- **Outlier** : valeur non rattachable automatiquement, en attente de validation métier.
+- **Données conformes** : lignes respectant l'ensemble des règles de validation définies.
 """
 
 
@@ -194,7 +191,21 @@ def _clean_cell(value) -> str:
     return " ".join(parts)
 
 
-def _html_table(headers: list, widths: list, rows: list, numeric_cols: set) -> str:
+def _titre(titre: str, report: QualityReport) -> str:
+    """En-tête centré : titre, endpoint, mode et date d'exécution — évite de
+    répéter ces informations dans chaque section."""
+    mode = "Incremental Load (delta)" if report.mode == "incremental" else "Initial Load (historique complet)"
+    return (
+        f'<div class="entete">'
+        f'<div class="titre">{escape(titre)}</div>'
+        f'<div class="sous-titre">{escape(report.api_id)} &nbsp;|&nbsp; {escape(mode)} '
+        f'&nbsp;|&nbsp; {report.started_at.strftime("%d/%m/%Y")}</div>'
+        f"</div>"
+    )
+
+
+def _html_table(headers: list, widths: list, rows: list, numeric_cols: set,
+                 highlight_last: bool = False) -> str:
     """
     Tableau HTML avec largeurs de colonnes EXPLICITES — les tableaux Markdown
     laissent xhtml2pdf répartir la largeur uniformément, ce qui écrasait la
@@ -214,12 +225,14 @@ def _html_table(headers: list, widths: list, rows: list, numeric_cols: set) -> s
     )
 
     body_rows = []
+    derniere = len(rows) - 1
     for idx, row in enumerate(rows):
+        total = highlight_last and idx == derniere
         cells = "".join(
             f'<td{" class=\"num\"" if i in numeric_cols else ""}>{escape(_clean_cell(c))}</td>'
             for i, c in enumerate(row)
         )
-        cls = ' class="alt"' if idx % 2 else ""
+        cls = ' class="total"' if total else (' class="alt"' if idx % 2 else "")
         body_rows.append(f"<tr{cls}>{cells}</tr>")
 
     return (
@@ -237,17 +250,17 @@ def build_outliers_report_markdown(
     numeric_id_col: str,
     top_n: int = DEFAULT_TOP_N_REFBANQUE_DETAIL,
 ) -> str:
-    """Rapport des outliers — synthèse par champ traité + détail par champ.
+    """Rapport des outliers — DEUX tableaux de synthèse, tels que demandés dans le
+    gabarit du Business Analyst : répartition par champ traité, et par RefBanque.
+
     `field_rows` (liste ordonnée des libellés JSON à afficher) et `champ_labels`
     (mapping clé interne -> libellé JSON) sont fournis par le module reports.py de
     chaque API — seule partie qui varie réellement d'une API à l'autre.
 
-    `top_n` : nombre max de valeurs détaillées PAR CHAMP (0 = pas de limite),
-    piloté par `reports.top_n_outliers_detail` dans le YAML.
-
-    Le détail est groupé PAR CHAMP (une section + un tableau par champ) au lieu
-    d'une table unique tous champs confondus : la colonne "Champ concerné" y était
-    répétée à l'identique sur chaque ligne, au détriment de la valeur source.
+    La liste exhaustive valeur par valeur ne figure PAS ici (elle n'était pas
+    demandée et rendait le rapport illisible) : elle reste dans le classeur Excel
+    de classification, qui est l'outil de validation métier. `top_n` borne le
+    nombre de banques listées, pour qu'un parc étendu ne noie pas la synthèse.
     """
     total_outliers = sum(report.outliers_by_champ.values())
 
@@ -265,49 +278,49 @@ def build_outliers_report_markdown(
         ["52%", "24%", "24%"],
         synthese_rows,
         numeric_cols={1, 2},
+        highlight_last=True,
     )
 
-    detail_rows = collect_refbanque_detail(results, champ_labels, numeric_id_col)
+    # Agrégation par banque : une ligne par RefBanque, pas une par valeur source.
+    par_banque: dict = {}
+    for ref_banque, _champ, _valeur, n in collect_refbanque_detail(results, champ_labels, numeric_id_col):
+        par_banque[ref_banque] = par_banque.get(ref_banque, 0) + n
 
-    # Regroupement par champ, en conservant l'ordre d'affichage de field_rows.
-    by_champ: dict = {}
-    for ref_banque, champ, valeur, n in detail_rows:
-        by_champ.setdefault(champ, []).append((valeur, ref_banque, n))
+    total_banque = sum(par_banque.values())
+    classees = sorted(par_banque.items(), key=lambda kv: (-kv[1], kv[0]))
+    affichees = classees[:top_n] if top_n and len(classees) > top_n else classees
 
-    sections = []
-    for label in field_rows:
-        entries = sorted(by_champ.get(label, []), key=lambda e: (-e[2], e[0]))
-        if not entries:
-            continue
-
-        total_champ = len(entries)
-        shown = entries[:top_n] if top_n and total_champ > top_n else entries
-        note = ""
-        if len(shown) < total_champ:
-            note = (
-                f"\n*{len(shown)} valeurs les plus fréquentes sur {format_int_fr(total_champ)} au total — "
-                f"liste exhaustive dans le classeur Excel de classification joint.*\n"
-            )
-
-        table = _html_table(
-            ["Valeur source", "RefBanque", "Nb occurrences"],
-            ["58%", "22%", "20%"],
-            [[valeur, ref_banque, format_int_fr(n)] for valeur, ref_banque, n in shown],
-            numeric_cols={2},
+    if affichees:
+        banque_rows = [[banque, format_int_fr(n),
+                        format_pct_fr(round(100 * n / max(total_banque, 1), 1))]
+                       for banque, n in affichees]
+        banque_rows.append(["TOTAL", format_int_fr(total_banque), "100,0 %"])
+        table_banque = _html_table(
+            ["RefBanque", "Nb occurrences", "% du total"],
+            ["52%", "24%", "24%"],
+            banque_rows,
+            numeric_cols={1, 2},
+            highlight_last=True,
         )
-        sections.append(f"### {label} — {format_int_fr(total_champ)} valeur(s) à valider\n{note}\n{table}")
+        if len(affichees) < len(classees):
+            table_banque += (f"\n\n*{len(affichees)} banques les plus concernées sur "
+                              f"{len(classees)} au total.*")
+    else:
+        table_banque = "*Aucun outlier détecté sur cette période.*"
 
-    detail_block = "\n\n".join(sections) if sections else "*Aucun outlier détecté sur cette période.*"
-
-    return f"""# Rapport des outliers — {report.api_id}
-
-Ce rapport recense les valeurs n'ayant pas pu être classifiées automatiquement par le moteur de normalisation. Une validation métier est requise pour compléter la valeur normalisée attendue.
+    return f"""{_titre("Rapport des outliers", report)}
 
 ## Répartition par champ traité
 
 {table_synthese}
 
-## Détail des outliers par champ
+## Répartition par RefBanque
 
-{detail_block}
+{table_banque}
+
+### Repères de lecture
+
+- **Outlier** : valeur non rattachée automatiquement à une valeur normalisée du référentiel.
+- Une validation métier est requise pour compléter la valeur normalisée attendue.
+- La liste exhaustive des valeurs à valider figure dans le classeur Excel de classification joint.
 """

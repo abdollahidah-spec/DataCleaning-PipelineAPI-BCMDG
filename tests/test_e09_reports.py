@@ -75,9 +75,9 @@ def _results() -> list:
 def test_quality_report_markdown_uses_generic_shared_template():
     md = build_quality_report_markdown(_quality_report())
 
-    assert "Rapport de qualité des traitements — E09_PE" in md
-    assert "Nombre total de lignes traitées : 50" in md
-    assert "Taux de données conformes : 60,0 %" in md
+    assert "Rapport de qualité des traitements" in md and "E09_PE" in md
+    assert '<td>Lignes traitées</td><td class="num">50</td>' in md
+    assert '<td>Taux de données conformes</td><td class="num">60,0 %</td>' in md
 
 
 def test_outliers_report_has_three_rows_no_numcredoc():
@@ -96,5 +96,7 @@ def test_outliers_report_has_three_rows_no_numcredoc():
 def test_outliers_report_refbanque_detail_uses_numcredoc_as_source_value():
     md = build_outliers_report_markdown(_quality_report(), _results())
 
-    assert "CD1" in md
-    assert "CD2" in md
+    # Agrégation par banque : les identifiants ligne à ligne ne figurent plus
+    # dans le PDF (ils restent dans le classeur Excel).
+    assert '<td>B1</td>' in md and '<td>B2</td>' in md
+    assert "CD1" not in md and "CD2" not in md

@@ -71,8 +71,8 @@ def _results() -> list:
 
 def test_quality_report_markdown_uses_generic_shared_template():
     md = build_quality_report_markdown(_quality_report())
-    assert "Rapport de qualité des traitements — E08_OCD" in md
-    assert "Nombre total de lignes traitées : 40" in md
+    assert "Rapport de qualité des traitements" in md and "E08_OCD" in md
+    assert '<td>Lignes traitées</td><td class="num">40</td>' in md
 
 
 def test_outliers_report_has_three_rows_no_numcredoc_row():
@@ -90,6 +90,6 @@ def test_outliers_report_has_three_rows_no_numcredoc_row():
 
 def test_outliers_report_refbanque_detail_present():
     md = build_outliers_report_markdown(_quality_report(), _results())
-    assert "Z1" in md
-    assert "Z2" in md
-    assert "Z3" in md
+    # Agrégation par banque : plus de liste valeur par valeur dans le PDF.
+    assert '<td>B1</td>' in md and '<td>B2</td>' in md and '<td>B3</td>' in md
+    assert "Z1" not in md and "Z2" not in md and "Z3" not in md
