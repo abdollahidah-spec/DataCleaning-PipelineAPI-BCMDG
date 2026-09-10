@@ -582,7 +582,15 @@ def treating_pays(
             pair_iso.append(res_iso)
             pair_mth.append(res_mth)
 
-        pair_df = pd.DataFrame({pays_col: pays_vals, ref_col: ref_vals, "_pair_iso": pair_iso, "_pair_mth": pair_mth})
+        # `pair_df` est dérivé de `pairs` (et non reconstruit depuis des listes
+        # Python) pour CONSERVER le type des colonnes de jointure. Reconstruire
+        # depuis une liste fait perdre le dtype d'origine : sur un delta VIDE, les
+        # listes vides donnent des colonnes float64 face aux colonnes object de la
+        # source, et la fusion échoue ("merge on object and float64 columns").
+        # Ce cas survient à chaque run sans nouvelle ligne — donc très souvent.
+        pair_df = pairs.copy()
+        pair_df["_pair_iso"] = pair_iso
+        pair_df["_pair_mth"] = pair_mth
         df = df.merge(pair_df, on=[pays_col, ref_col], how="left")
         df["Pays_Normalisé"] = df["_pair_iso"].where(df["_pair_iso"].notna(), df["Pays_Normalisé"])
         df["Pays_method"]    = df["_pair_mth"].where(df["_pair_mth"].notna(), df["Pays_method"])
