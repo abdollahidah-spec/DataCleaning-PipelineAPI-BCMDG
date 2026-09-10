@@ -43,6 +43,24 @@ def test_ok_email_body_matches_ba_template_structure():
     assert body.strip().endswith("Cordialement,")
 
 
+def test_indicateurs_en_liste_a_puces_mais_pas_les_paragraphes():
+    """Les valeurs chiffrées se lisent comme une liste (puce en tête de ligne) ;
+    les paragraphes de texte, eux, ne doivent jamais être préfixés."""
+    from shared.email_notifier import _build_ok_body
+
+    body = _build_ok_body(_quality_report(), "E11 – RDCC", "10/09/2026", pdf_paths=[])
+    lignes = body.splitlines()
+
+    indicateurs = [l for l in lignes if l.startswith("- ")]
+    assert len(indicateurs) == 6, f"6 indicateurs attendus, trouvé : {indicateurs}"
+    assert all(" : " in l for l in indicateurs)
+
+    for debut in ("Bonjour,", "Veuillez trouver", "Vous trouverez", "Merci de bien",
+                   "Restant à disposition", "Cordialement,"):
+        ligne = next(l for l in lignes if l.startswith(debut) or l.startswith(f"- {debut}"))
+        assert not ligne.startswith("- "), f"paragraphe préfixé à tort : {ligne[:40]}"
+
+
 def test_ok_email_body_lists_pdf_report_names():
     from pathlib import Path
 

@@ -36,6 +36,11 @@ from shared.quality_report import QualityReport, format_duration_mmss
 
 _DEFAULT_ERROR_CATEGORY = "Erreur inattendue lors du traitement"
 
+# Marqueur de liste en tête des indicateurs chiffrés du corps de l'email. Un tiret
+# ASCII plutôt qu'une puce typographique : le corps est envoyé en texte brut et
+# doit rester lisible quel que soit le client de messagerie et son encodage.
+_PUCE = "- "
+
 
 def _missing_config() -> list[str]:
     required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_APP_PASSWORD", "EMAIL_TO"]
@@ -110,12 +115,15 @@ def _build_ok_body(report: QualityReport, endpoint_label: str, date_str: str, pd
         "Vous trouverez également en pièce jointe le rapport complet de qualité du traitement et des "
         "outliers, permettant d'avoir une vision globale de l'ensemble de l'historique traité.\n\n"
         f"{header}\n\n"
-        f"Nombre de lignes traitées{suf} : {_fmt_int(report.n_rows)}\n"
-        f"Nombre de nouvelles valeurs distinctes détectées : {_fmt_int(n_new_distinct)}\n"
-        f"Nombre de nouvelles valeurs normalisées : {_fmt_int(n_new_normalized)}\n"
-        f"Nombre de nouveaux outliers : {_fmt_int(n_new_outliers)}\n"
-        f"Taux de données conformes{suf} : {_fmt_pct(report.taux_conformite_pct)}\n"
-        f"Temps d'exécution{suf} : {format_duration_mmss(report.execution_time_seconds)}\n\n"
+        # Puce en tête de chaque indicateur — uniquement sur les valeurs chiffrées,
+        # jamais sur les paragraphes de texte, pour que le bloc se lise comme une
+        # liste et non comme un pavé.
+        f"{_PUCE}Nombre de lignes traitées{suf} : {_fmt_int(report.n_rows)}\n"
+        f"{_PUCE}Nombre de nouvelles valeurs distinctes détectées : {_fmt_int(n_new_distinct)}\n"
+        f"{_PUCE}Nombre de nouvelles valeurs normalisées : {_fmt_int(n_new_normalized)}\n"
+        f"{_PUCE}Nombre de nouveaux outliers : {_fmt_int(n_new_outliers)}\n"
+        f"{_PUCE}Taux de données conformes{suf} : {_fmt_pct(report.taux_conformite_pct)}\n"
+        f"{_PUCE}Temps d'exécution{suf} : {format_duration_mmss(report.execution_time_seconds)}\n\n"
         f"{detail_paragraph}"
         "Merci de bien vouloir consulter le rapport et procéder à la validation métier des valeurs "
         "identifiées comme outliers.\n\n"
