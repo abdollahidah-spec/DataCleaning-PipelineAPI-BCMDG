@@ -10,15 +10,20 @@ from e11_rdcc.pipeline import E11Pipeline
 REPO_ROOT = Path(__file__).parent.parent
 
 
+def _pipeline_en_production(cfg) -> E11Pipeline:
+    """Pipeline configuré comme un run réel (base de données), par opposition à un
+    run `--input` — seul le mode production écrit dans OUTPUT_BASE."""
+    pipeline = E11Pipeline(cfg)
+    pipeline._mode_fichier = False
+    return pipeline
+
+
 def test_output_base_redirects_local_storage(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_BASE", str(tmp_path))
 
-    cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
-    result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
+    dossier = _pipeline_en_production(load_config("e11_rdcc/config/E11_RDCC.yaml"))._resolve_output_dir()
 
-    assert result["status"] == "OK"
-    assert result["path"].resolve().is_relative_to(tmp_path.resolve())
-    assert result["path"].exists()
+    assert dossier.resolve().is_relative_to(tmp_path.resolve())
 
 
 def test_output_base_uses_uppercase_api_id_with_no_outputs_subfolder(tmp_path, monkeypatch):
@@ -28,25 +33,54 @@ def test_output_base_uses_uppercase_api_id_with_no_outputs_subfolder(tmp_path, m
     explicite : "supprimer le niveau output et le nom de l'API en majuscules")."""
     monkeypatch.setenv("OUTPUT_BASE", str(tmp_path))
 
-    cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
-    result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
+    dossier = _pipeline_en_production(load_config("e11_rdcc/config/E11_RDCC.yaml"))._resolve_output_dir()
 
-    assert result["path"].parent == tmp_path / "E11_RDCC"
+    assert dossier == tmp_path / "E11_RDCC"
 
 
 def test_pdf_report_goes_to_dedicated_rapport_subfolder(tmp_path, monkeypatch):
     """Le PDF (daté, s'accumule à chaque run) doit être séparé du classeur de
     classification (stable, branché BI, jamais daté/déplacé) — retour explicite :
     sous-dossier "Rapport" dédié, jamais le même dossier que le fichier Excel."""
-    monkeypatch.setenv("OUTPUT_BASE", str(tmp_path))
+    monkeypatch.delenv("OUTPUT_BASE", raising=False)
+    monkeypatch.setenv("OUTPUT_BASE", "")
 
     cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
-    result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
+    try:
+        result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
 
-    assert result["path"].parent == tmp_path / "E11_RDCC"  # classeur : PAS dans Rapport/
-    assert result["pdf_paths"], "aucun PDF généré, le test ne vérifie rien"
-    for pdf_path in result["pdf_paths"]:
-        assert pdf_path.parent == tmp_path / "E11_RDCC" / "Rapport"
+        dossier_api = result["path"].parent
+        assert result["pdf_paths"], "aucun PDF généré, le test ne vérifie rien"
+        for pdf_path in result["pdf_paths"]:
+            assert pdf_path.parent == dossier_api / "Rapport"   # PDF isolé du classeur
+    finally:
+        for f in (REPO_ROOT / "e11_rdcc" / "outputs").glob("E11_RDCC_*"):
+            f.unlink(missing_ok=True)
+        for f in (REPO_ROOT / "e11_rdcc" / "outputs" / "Rapport").glob("Rapport_Qualite_Outliers_E11_RDCC_*"):
+            f.unlink(missing_ok=True)
+
+
+def test_mode_fichier_n_ecrase_jamais_le_dossier_de_production(tmp_path, monkeypatch):
+    """Un test hors ligne (--input) ne doit RIEN écrire dans OUTPUT_BASE, où est
+    branché le BI. Incident réel : un simple test remplaçait le classeur livrable
+    par les quelques lignes du fichier d'exemple."""
+    production = tmp_path / "production"
+    production.mkdir()
+    monkeypatch.setenv("OUTPUT_BASE", str(production))
+
+    cfg = load_config("e11_rdcc/config/E11_RDCC.yaml")
+    try:
+        result = E11Pipeline(cfg).run(mode="auto", override_input="tests/fixtures/e11_rdcc_sample.csv")
+
+        assert result["status"] == "OK"
+        assert not any(production.rglob("*")), \
+            f"le dossier de production a été touché : {list(production.rglob('*'))}"
+        assert result["path"].resolve().is_relative_to((REPO_ROOT / "e11_rdcc" / "outputs").resolve())
+    finally:
+        for f in (REPO_ROOT / "e11_rdcc" / "outputs").glob("E11_RDCC_*"):
+            f.unlink(missing_ok=True)
+        for f in (REPO_ROOT / "e11_rdcc" / "outputs" / "Rapport").glob("Rapport_Qualite_Outliers_E11_RDCC_*"):
+            f.unlink(missing_ok=True)
 
 
 def test_output_base_empty_uses_local_dir_in_repo(monkeypatch, tmp_path_factory):

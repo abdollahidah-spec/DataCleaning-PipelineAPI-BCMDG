@@ -441,6 +441,15 @@ class BaseApiPipeline:
         """
         import os
 
+        # Mode fichier (--input) = TEST hors ligne : les livrables restent dans le
+        # dépôt et n'écrasent JAMAIS le dossier de production, où est branché le
+        # BI. Sans cette garde, un simple test du testeur remplaçait le classeur
+        # livrable par les quelques lignes du fichier d'exemple (incident réel).
+        # Même esprit que le mode fichier qui saute déjà SharePoint, l'email et
+        # l'état incrémental.
+        if getattr(self, "_mode_fichier", False):
+            return Path(self.cfg["output"]["local_dir"])
+
         base_dir = os.getenv("OUTPUT_BASE", "").strip()
         if base_dir:
             return Path(base_dir) / self.api_id.upper()
@@ -555,6 +564,9 @@ class BaseApiPipeline:
                 self.logger.info(line)
 
             offline = resolved_mode == "file"
+            # Isole les sorties d'un test hors ligne du dossier de production
+            # (voir _resolve_output_dir).
+            self._mode_fichier = offline
             self._attach_cumulative_stats(quality, results, offline)
 
             import time as _time
