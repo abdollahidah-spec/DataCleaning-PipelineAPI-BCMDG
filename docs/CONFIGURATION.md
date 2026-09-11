@@ -7,8 +7,8 @@ Copier `.env.example` vers `.env` et renseigner :
 | Variable | Utilisation |
 |---|---|
 | `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_DRIVER` | Connexion SQL Server — **lecture seule** sur toutes les tables sources (E11, E09, ...) — aucune écriture/DDL autorisée sur cette base |
-| `ANTHROPIC_API_KEY` | Fallback Claude — NomCorrespondant (E11, E08), Produits/NomDonneurOrdre/Beneficiaire/Pays (E08). Beneficiaire utilise en plus l'outil serveur `web_search` (facturé à l'usage) |
-| `DGI_BASE_PATH`, `PUBLIC_ENT_PATH` | Fichiers de référence externes (E08 : `NomDonneurOrdre`, `Beneficiaire`) — base fiscale DGI et liste des entreprises publiques. Toujours un chemin explicite en `.env`, jamais en dur dans le code (voir `e08_ocd/fields/_entity_matching.py`). `DGI_BASE_PATH` absent → erreur claire au chargement ; `PUBLIC_ENT_PATH` absent → liste vide, dégradé propre (pas d'erreur, juste aucune entreprise publique reconnue) |
+| `ANTHROPIC_API_KEY` | Fallback Claude — NomCorrespondant (E11, E08), Produits/NomDonneurOrdre/Beneficiaire/Pays (E08), NomDonneurOrdre/Beneficiaire/NatureEconomique/Pays (E07). Beneficiaire utilise en plus l'outil serveur `web_search` (facturé à l'usage) |
+| `DGI_BASE_PATH`, `PUBLIC_ENT_PATH` | Fichiers de référence externes (E08 et E07 : `NomDonneurOrdre`, `Beneficiaire`) — base fiscale DGI et liste des entreprises publiques. Toujours un chemin explicite en `.env`, jamais en dur dans le code (voir `e08_ocd/fields/_entity_matching.py`). `DGI_BASE_PATH` absent → erreur claire au chargement ; `PUBLIC_ENT_PATH` absent → liste vide, dégradé propre (pas d'erreur, juste aucune entreprise publique reconnue) |
 | `OUTPUT_BASE` | **Stockage local/réseau — pas besoin de SharePoint.** Vide = livrables dans `{api}/outputs/` (ex: `e11_rdcc/outputs/`, `e09_pe/outputs/` — fonctionne déjà). Renseigné (ex: `D:\BCM_Outputs` ou `\\serveur\partage`) = tous les livrables écrits sous `{OUTPUT_BASE}/{API_ID}/...` — nom de l'API en MAJUSCULES, sans niveau `outputs/` intermédiaire (ex: `D:\BCM_Outputs\E11_RDCC\`, `D:\BCM_Outputs\E09_PE\`) — un dossier par API, jamais de collision même en lancement parallèle |
 | `STATE_DIR` | **État incrémental — fichier JSON local, pas une table SQL.** Vide = `state/` à la racine du repo, un fichier par API (`state/E11_RDCC_run_state.json`, `state/E09_PE_run_state.json`...). Voir `shared/state_store.py` |
 | `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_URL`, `SHAREPOINT_FOLDER_PATH` | Upload SharePoint (optionnel, pour plus tard — si absent, l'upload est simplement ignoré, pas d'erreur) |
@@ -115,6 +115,25 @@ Contrairement à l'ancien repo, les résolutions Claude de Pays sont maintenant 
 **Filtre SITUATION de la base DGI** : décision confirmée de reproduire le comportement de
 l'ancien repo tel quel — aucun filtre sur `SITUATION` (ACTIF/EN CESSATION), une entreprise en
 cessation d'activité reste matchable comme une entreprise active.
+
+## `e07_fs/config/E07_FS.yaml`
+
+`input.table_name: "E7EtatBcmFluxSortants"`. 7 champs `type: categorical` (TypeSwift,
+ModeReglement, Devise, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays), tous avec
+`ref_transaction: "ReferenceTransaction"` comme témoin NA, et un bloc
+`type: transaction_validation` :
+
+- `columns` : `montant_transaction`, `taux_de_change`, `date_transaction`, `dt_cr`,
+  `ref_banque`, `reference_transaction`, `pays` (toutes obligatoires, vérifiées au chargement).
+- `date_inclusive` (défaut `false`) : le ticket demande `dateTransaction < dtCr` (strict) — une
+  transaction datée du jour même de `dtCr` est une anomalie. `true` autorise le même jour.
+- `no_activity.template_na_columns` : colonnes qui doivent valoir `NA` sur un message sans
+  activité ; `no_activity.pays_value` (défaut `NoAs`). Ces colonnes sont ajoutées
+  automatiquement à la requête SQL, même si aucun champ ne les normalise (`SourceDevise`,
+  `Produit`).
+- `TypeSwift` : `flux: "FS"` sélectionne la liste `valid_fs` du référentiel. La colonne source
+  s'appelle réellement `TypeSwfit` (orthographe du schéma BCM).
+- `NomDonneurOrdre` : `columns.nif_nni: "NifNni"` et bloc `matching`, comme E08.
 
 ## Installation
 

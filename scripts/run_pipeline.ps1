@@ -1,6 +1,6 @@
 # scripts/run_pipeline.ps1
-# Cible unique du job Windows Task Scheduler — lance les 3 pipelines (E11_RDCC,
-# E09_PE, E08_OCD) en mode incremental (delta uniquement, cf. shared/state_store.py).
+# Cible unique du job Windows Task Scheduler — lance les 4 pipelines (E11_RDCC,
+# E09_PE, E08_OCD, E07_FS) en mode incremental (delta uniquement, cf. shared/state_store.py).
 # Chaque pipeline gere son propre succes/echec (email OK/KO, etat) : l'echec de
 # l'un n'empeche pas le lancement des suivants.
 #
@@ -20,6 +20,7 @@
 #   python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode initial
 #   python -m e09_pe.run_pipeline   --config e09_pe/config/E09_PE.yaml     --mode initial
 #   python -m e08_ocd.run_pipeline  --config e08_ocd/config/E08_OCD.yaml   --mode initial
+#   python -m e07_fs.run_pipeline   --config e07_fs/config/E07_FS.yaml     --mode initial
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -31,7 +32,8 @@ $python = if (Test-Path $venvPython) { $venvPython } else { "python" }
 $pipelines = @(
     @{ Module = "e11_rdcc.run_pipeline"; Config = "e11_rdcc/config/E11_RDCC.yaml" },
     @{ Module = "e09_pe.run_pipeline";   Config = "e09_pe/config/E09_PE.yaml" },
-    @{ Module = "e08_ocd.run_pipeline";  Config = "e08_ocd/config/E08_OCD.yaml" }
+    @{ Module = "e08_ocd.run_pipeline";  Config = "e08_ocd/config/E08_OCD.yaml" },
+    @{ Module = "e07_fs.run_pipeline";   Config = "e07_fs/config/E07_FS.yaml" }
 )
 
 $exitCode = 0

@@ -171,3 +171,26 @@ demande que 2 contrôles indépendants, sans mémoire entre lignes — voir `e09
 des lignes échouent `DATE_VALIDITY` (échéance le jour même ou antérieure à la création) — à faire
 valider par le métier lors du test : signal de qualité de données réel à investiguer, ou situation
 normale (ex: échéances arrivées à terme avant mise à jour du statut) ?
+
+## E07_FS (Flux Sortants)
+
+### Champs catégoriels
+
+TypeSwift, ModeReglement, Devise, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays —
+même principe que les autres APIs : référentiel + cache warm-start, puis Claude (liste fermée)
+pour les valeurs nouvelles quand le champ le prévoit. Règle NA par champ, témoin
+`ReferenceTransaction` : un `NA` n'est légitime que si la référence vaut aussi `NA`. Pays garde
+sa règle NoAs spécifique (« NA » est le code ISO de la Namibie).
+
+### Transactions — 4 règles
+
+| Règle | Contrôle | Champ du rapport |
+|---|---|---|
+| `AMOUNT_NON_NEGATIVE` | `MontantTransaction` numérique et ≥ 0 | montantTransaction |
+| `RATE_NON_NEGATIVE` | `TauxDeChange` numérique et ≥ 0 | tauxDeChange |
+| `DATE_VALIDITY` | `DateTransaction` parsable et strictement antérieure à `dtCr`, comparaison au jour (option `date_inclusive`) | dateTransaction |
+| `NO_ACTIVITY_CONFORMITY` | Message sans activité (`ReferenceTransaction` = `NA`) : champs texte à `NA`, `Pays` = `NoAs`, montant et taux = 0 | referenceTransaction |
+
+Une ligne en échec sur plusieurs règles produit une ligne d'anomalie par règle (onglet
+`Anomalies_Transactions`). `Produit` est hors périmètre pour l'instant : non normalisé, il est
+seulement contrôlé par le gabarit « sans activité », comme `SourceDevise`.

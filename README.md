@@ -8,14 +8,15 @@ Chaque pipeline traite **tous les champs d'une API en un seul run** et produit u
 livrables, au lieu de faire tourner un champ (Devise, NomCorrespondant, ...) indépendamment
 sur toutes les APIs qui le contiennent.
 
-> **Portée actuelle : E11 — RDCC** (ticket BCMDG-172), **E09 — PE** (ticket BCMDG-223) et
+> **Portée actuelle : E11 — RDCC** (ticket BCMDG-172), **E09 — PE** (ticket BCMDG-223),
 > **E08 — OCD**, 6 champs (pas de ticket Jira dédié, porté directement depuis l'ancien repo
-> par-champ). Ce README documente principalement E11 (le plus complet) ; E09 et E08 suivent
+> par-champ) et **E07 — FS** (flux sortants : 7 champs catégoriels + validation des
+> transactions, voir *Champs traités — E07_FS*). Ce README documente principalement E11 (le plus complet) ; E09 et E08 suivent
 > exactement la même approche (voir *Champs traités* ci-dessous et [e09_pe/](e09_pe/) /
 > [e08_ocd/](e08_ocd/)). E08 combine des champs déterministe+Claude (Devise, NomCorrespondant,
 > Produits), du matching contre la base fiscale DGI (NomDonneurOrdre), du Claude+recherche web
 > (Bénéficiaire) et un référentiel pycountry/babel/geonamescache (Pays) — voir *Champs traités —
-> E08_OCD* pour le détail de chacun. D'autres endpoints (E07_FS, E10_FE...) pourront être ajoutés
+> E08_OCD* pour le détail de chacun. D'autres endpoints (E10_FE...) pourront être ajoutés
 > de la même façon — chacun son propre package `e0X_xxx/`, sans modifier ce qui existe déjà (voir
 > *Architecture* ci-dessous).
 
@@ -50,6 +51,14 @@ DataCleaning-PipelineAPI-BCMDG/
 │   ├── referentiel/    Référentiels + caches warm-start, propres à E08 (dont des caches
 │   │                    NomCorrespondant/NomDonneurOrdre/Pays repris tel quels de l'ancien repo)
 │   ├── config/E08_OCD.yaml
+│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, reports.py
+│   └── outputs/        Sorties locales (gitignored)
+├── e07_fs/            Package auto-contenu de l'API E07 (Flux Sortants) — 7 champs
+│   ├── fields/         catégoriels (TypeSwift, ModeReglement, NatureEconomique + portages
+│   │                    d'E08 : Devise, NomDonneurOrdre, Beneficiaire, Pays) et le moteur
+│   │                    de validation transactions.py (montant, taux, date, sans activité)
+│   ├── referentiel/    Référentiels + caches warm-start repris de l'ancien repo
+│   ├── config/E07_FS.yaml
 │   ├── pipeline.py, run_pipeline.py, apply_corrections.py, reports.py
 │   └── outputs/        Sorties locales (gitignored)
 ├── req/                Fichiers de référence externes (base fiscale DGI, entreprises publiques)
@@ -125,6 +134,30 @@ python -m e08_ocd.run_pipeline --config e08_ocd/config/E08_OCD.yaml --input test
 
 Toutes les commandes de la section *Utilisation* ci-dessous existent aussi pour E08
 (`python -m e08_ocd.run_pipeline`, `python -m e08_ocd.apply_corrections`, mêmes options).
+
+## Champs traités — E07_FS
+
+Table `E7EtatBcmFluxSortants`. Le champ « banque » du ticket correspond à `RefBanque`.
+
+| Champ | Type | Traitement |
+|---|---|---|
+| `TypeSwfit` | catégoriel | Codes SWIFT valides des Flux Sortants (`valid_fs`), comparés sans espaces ; numéro seul (« 103 ») → `MT 103` ; bruit/montant → OUTLIER — voir [e07_fs/fields/typeswift.py](e07_fs/fields/typeswift.py) |
+| `ModeReglement` | catégoriel | Codes CD/RD/TL + alias (TR → TL) + bruit connu |
+| `Devise` | catégoriel | Référentiel ISO 4217 (identique à E08) |
+| `NomDonneurOrdre` | catégoriel | Identique à E08 (NIF exact DGI via `NifNni`, entreprises publiques, matching flou, arbitrage Claude) |
+| `Beneficiaire` | catégoriel | Identique à E08 (Claude + recherche web) |
+| `NatureEconomique` | catégoriel | Référentiel Flux Sortants de l'ancien repo (14 catégories, 78 labels) + mapping direct + pré-filtre des outliers évidents → API Claude sur liste FERMÉE de labels (remplace l'embedding mpnet de l'ancien repo) — voir [e07_fs/fields/nature_economique.py](e07_fs/fields/nature_economique.py) |
+| `Pays` | catégoriel | Identique à E08 (règle NoAs spécifique) |
+| `MontantTransaction`, `TauxDeChange`, `DateTransaction` | validation | Montant ≥ 0, taux ≥ 0, date parsable et antérieure à `dtCr` (au jour), conformité du gabarit « sans activité » → onglet `Anomalies_Transactions` — voir [e07_fs/fields/transactions.py](e07_fs/fields/transactions.py) |
+
+`ReferenceTransaction` n'est pas normalisée : c'est le témoin NA de chaque champ catégoriel et
+le discriminant des messages « sans activité » (référence = `NA`). `SourceDevise` (décision
+métier) et `Produit` (hors périmètre pour l'instant) ne sont pas normalisés, mais sont contrôlés
+par le gabarit « sans activité ».
+
+```bash
+python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --input tests/fixtures/e07_fs_sample.csv
+```
 
 ---
 

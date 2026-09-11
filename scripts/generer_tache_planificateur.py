@@ -108,8 +108,8 @@ def generer(heure: str, frequence: str, jour: str, sortie: Path,
     type_connexion = "InteractiveTokenOrPassword" if hors_session else "InteractiveToken"
 
     xml = _MODELE.format(
-        description=escape("Nettoyage/normalisation des endpoints BCM (E11_RDCC, E09_PE, E08_OCD) "
-                            "— lance les 3 pipelines en mode incremental."),
+        description=escape("Nettoyage/normalisation des endpoints BCM (E11_RDCC, E09_PE, E08_OCD, E07_FS) "
+                            "— lance les 4 pipelines en mode incremental."),
         nom="BCM - Data Cleaning APIs",
         heure=heure,
         planification=planification,

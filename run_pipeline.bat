@@ -1,6 +1,6 @@
 @echo off
 REM Wrapper appelable directement par Task Scheduler si un .bat est prefere a PowerShell.
-REM La logique complete (choix de l'interpreteur venv, lancement des 3 pipelines en
+REM La logique complete (choix de l'interpreteur venv, lancement des 4 pipelines en
 REM mode incremental) vit dans scripts\run_pipeline.ps1 — ce fichier ne fait que la deleguer.
 REM
 REM La frequence (quotidienne, hebdomadaire...) depend uniquement du declencheur

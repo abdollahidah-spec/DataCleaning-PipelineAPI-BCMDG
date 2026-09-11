@@ -31,10 +31,18 @@ _NUMERIC_VALIDATION_COLUMNS_REQUIRED = [
     "montant_echeance", "date_echeance", "dt_cr", "ref_banque", "num_credoc",
 ]
 
+# "transaction_validation" : moteur E07_FS (montant >= 0, taux >= 0, date < dtCr,
+# conformité du gabarit « sans activité ») — e07_fs/fields/transactions.py.
+_TRANSACTION_VALIDATION_COLUMNS_REQUIRED = [
+    "montant_transaction", "taux_de_change", "date_transaction", "dt_cr",
+    "ref_banque", "reference_transaction", "pays",
+]
+
 _TYPE_COLUMNS_REQUIRED = {
     "categorical": _CATEGORICAL_COLUMNS_REQUIRED,
     "numeric_coherence": _NUMERIC_COHERENCE_COLUMNS_REQUIRED,
     "numeric_validation": _NUMERIC_VALIDATION_COLUMNS_REQUIRED,
+    "transaction_validation": _TRANSACTION_VALIDATION_COLUMNS_REQUIRED,
 }
 
 

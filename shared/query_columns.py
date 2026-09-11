@@ -42,6 +42,13 @@ def required_columns(cfg: dict) -> set[str]:
                 continue
             if isinstance(value, str) and value.strip():
                 cols.add(value.strip())
+        # Colonnes lues par un contrôle de gabarit « sans activité » (ex: E07 :
+        # SourceDevise, Produit — non normalisées, mais contrôlées) : elles ne
+        # figurent dans aucun bloc `columns`, il faut donc les rapatrier aussi.
+        gabarit = (field_cfg.get("no_activity") or {}).get("template_na_columns") or []
+        for value in gabarit:
+            if isinstance(value, str) and value.strip():
+                cols.add(value.strip())
 
     input_cfg = cfg.get("input", {}) or {}
     dt_cr = input_cfg.get("dt_cr_column")

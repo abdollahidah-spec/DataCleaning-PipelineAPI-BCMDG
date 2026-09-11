@@ -158,6 +158,9 @@ class CategoricalFieldProcessor(FieldProcessor):
 _KNOWN_BEFORE_RUN_METHODS = {
     "WARM", "MAP", "NUM", "ALIAS", "STRIP", "NOISE",
     "NIF_EXACT", "PUBLIC_ENT", "DGI_EXACT_NORM", "DGI_FUZZY_STRONG",
+    # PREFIX (e07_fs/fields/typeswift.py) : « 103 » -> « MT 103 », déduction
+    # déterministe depuis le référentiel, même niveau de confiance que MAP.
+    "PREFIX",
 }
 
 
