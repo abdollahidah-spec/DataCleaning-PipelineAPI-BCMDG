@@ -91,7 +91,7 @@ fields:
       batch_size: 300
     llm:
       model: "claude-sonnet-5"
-      batch_size: 20
+      batch_size: 35             # lots d'arbitrage Claude — valeur de l'ancien repo pour E07
       max_retry: 3
       retry_wait: 2
 
@@ -179,6 +179,8 @@ output:
 email:
   enabled: true
   attach_workbook_max_mb: 15
+  # Libellé utilisé tel quel dans le sujet/corps de l'email (même gabarit que
+  # E11/E09/E08, validé par le Business Analyst) — ex: "Pipeline E07 – FS : ...".
   display_name: "E07 – FS"
 
 schedule:   # métadonnées uniquement — non lues par le pipeline
