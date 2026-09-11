@@ -33,8 +33,10 @@ def apply_na_rule_frame(
 
     Retourne (iso: Series, method: Series), alignées sur l'index de `df`.
     """
-    field_upper = df[field_col].astype(str).str.strip().str.upper()
-    ref_upper = df[ref_col].astype(str).str.strip().str.upper()
+    # Depuis pandas 3, astype(str) conserve les NULL (NaN) : sans fillna, un champ NULL
+    # échappait à la règle et restait vide au lieu de devenir OUTLIER.
+    field_upper = df[field_col].fillna("").astype(str).str.strip().str.upper()
+    ref_upper = df[ref_col].fillna("").astype(str).str.strip().str.upper()
     current_iso = df[iso_col]
     current_mth = df[mth_col]
 
