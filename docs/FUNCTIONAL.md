@@ -132,7 +132,7 @@ dont une colonne manque sont ignorés silencieusement (pas d'erreur — une requ
 peut légitimement ne couvrir que certains champs). Écrit une extraction locale (colonnes de la
 requête + leurs versions nettoyées insérées juste après), sans toucher SharePoint/email/état
 incrémental. Voir [README.md](../README.md#extraction-ad-hoc-requête-sql-personnalisée). (Outil
-disponible pour E11 uniquement à ce jour — pas encore porté pour E09.)
+disponible pour E11 et E07 (`e07_fs/ad_hoc_extraction.py`) — pas encore porté pour E09/E08.)
 
 ---
 

@@ -59,7 +59,7 @@ DataCleaning-PipelineAPI-BCMDG/
 │   │                    de validation transactions.py (montant, taux, date, sans activité)
 │   ├── referentiel/    Référentiels + caches warm-start repris de l'ancien repo
 │   ├── config/E07_FS.yaml
-│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, reports.py
+│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, ad_hoc_extraction.py, reports.py
 │   └── outputs/        Sorties locales (gitignored)
 ├── req/                Fichiers de référence externes (base fiscale DGI, entreprises publiques)
 │   │                    — gitignored, chemins pilotés par .env (DGI_BASE_PATH/PUBLIC_ENT_PATH)
@@ -242,6 +242,10 @@ python -m e11_rdcc.ad_hoc_extraction --config e11_rdcc/config/E11_RDCC.yaml \
 
 # ou depuis un fichier .sql, ou --table, ou --input (fichier local)
 python -m e11_rdcc.ad_hoc_extraction --config e11_rdcc/config/E11_RDCC.yaml --sql-file mon_extrait.sql --output mon_export.csv
+
+# même outil pour E07 (sortie par défaut : e07_fs/outputs/ad_hoc_extraction_{horodatage}.csv)
+python -m e07_fs.ad_hoc_extraction --config e07_fs/config/E07_FS.yaml \
+    --query "SELECT TOP 100 * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E7EtatBcmFluxSortants]"
 ```
 
 Un nouveau fichier horodaté est créé à chaque exécution (sauf si `--output` fixe un nom précis,
