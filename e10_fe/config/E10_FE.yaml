@@ -1,31 +1,33 @@
-# e07_fs/config/E07_FS.yaml
-# Config de la pipeline E07_FS (Flux Sortants) — fusionnée avec shared/config_base.yaml.
+# e10_fe/config/E10_FE.yaml
+# Config de la pipeline E10_FE (Flux Entrants) — fusionnée avec shared/config_base.yaml.
 # À lancer depuis la racine du repo (chemins relatifs résolus depuis là).
 #
-# Colonnes de E7EtatBcmFluxSortants (schéma confirmé le 2026-09-11) :
-#   ReferenceTransaction, DateTransaction, TypeSwfit, ModeReglement, Devise,
-#   MontantTransaction, TauxDeChange, NomDonneurOrdre, NifNni, SourceDevise,
-#   Beneficiaire, Produit, NatureEconomique, Pays, FkId, RefBanque, dtCr,
-#   idSysLog, fkidSyncOperation
+# Colonnes réelles de E10EtatBcmFluxEntrants (schéma relevé en base le 2026-09-17) :
+#   Id, Banque, ReferenceTransaction, DateTransaction, TypeSwfit, ModeReglement, Devise,
+#   MontantTransaction, TauxDeChange, NomDonneurOrdre, NifNni, Beneficiaire, Produit,
+#   NatureEconomique, Pays, FkId, RefBanque, dtCr, idSysLog, fkidSyncOperation
+#
+# ⚠ Pas de colonne SourceDevise dans cette table (contrairement à E07 et au ticket) :
+#   elle est donc absente du gabarit « sans activité » ci-dessous.
 #
 # Rôle de chaque colonne :
 #   Normalisées (7)   : TypeSwfit, ModeReglement, Devise, NomDonneurOrdre,
 #                       Beneficiaire, NatureEconomique, Pays
 #   Validées          : MontantTransaction, TauxDeChange, DateTransaction
-#   Conservées        : ReferenceTransaction (témoin NA), NifNni (matching DGI),
-#                       SourceDevise (décision métier : pas de normalisation),
-#                       RefBanque (= champ « banque » du ticket, axe de regroupement)
-#   Hors périmètre    : Produit (décision métier, pour l'instant) ; FkId, idSysLog,
-#                       fkidSyncOperation (techniques)
+#   Conservées        : ReferenceTransaction (témoin NA), NifNni (matching DGI du
+#                       bénéficiaire), RefBanque (= champ « banque » du ticket)
+#   Hors périmètre    : Produit (décision métier, pour l'instant) ; Id, Banque, FkId,
+#                       idSysLog, fkidSyncOperation (techniques / libellés)
 #
-# NomDonneurOrdre et Beneficiaire nécessitent DGI_BASE_PATH / PUBLIC_ENT_PATH
-# dans .env (fichiers externes, jamais en dur — voir .env.example).
+# Flux ENTRANTS : le donneur d'ordre est étranger (Claude + recherche web), le
+# bénéficiaire est local (matching base fiscale DGI) — l'inverse d'E07.
+# Beneficiaire nécessite DGI_BASE_PATH / PUBLIC_ENT_PATH dans .env.
 
-api_id: "E07_FS"
+api_id: "E10_FE"
 
 input:
   type: "sqlserver"
-  table_name: "E7EtatBcmFluxSortants"
+  table_name: "E10EtatBcmFluxEntrants"
   dt_cr_column: "dtCr"
 
 load:
@@ -42,20 +44,21 @@ columns:
 outlier_tag: "OUTLIER"
 
 # RÈGLE NA (shared/na_rule.py) — témoin ReferenceTransaction pour tous les champs
-# catégoriels (déjà le cas dans l'ancien repo, par champ) :
+# catégoriels :
 #   Champ == 'NA' ET ReferenceTransaction == 'NA' -> 'NA' (message sans activité)
 #   Champ == 'NA' ET ReferenceTransaction != 'NA' -> OUTLIER (NA suspecte)
+#   Champ vide / NULL                               -> OUTLIER
 fields:
   - name: "TypeSwift"
     type: "categorical"
     columns:
-      field: "TypeSwfit"               # faute d'orthographe du schéma BCM — c'est le vrai nom
+      field: "TypeSwfit"               # orthographe du schéma BCM — c'est le vrai nom
       field_out: "TypeSwift_Normalisé"
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
-    flux: "FS"                          # codes SWIFT valides des Flux Sortants
+    flux: "FE"                          # codes SWIFT valides des Flux Entrants (pacs.004 inclus)
     outlier_tag: "OUTLIER"
-    referentiel_path: "e07_fs/referentiel/typeswift_referentiel.json"
+    referentiel_path: "e10_fe/referentiel/typeswift_referentiel.json"
 
   - name: "ModeReglement"
     type: "categorical"
@@ -65,7 +68,7 @@ fields:
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
-    referentiel_path: "e07_fs/referentiel/mode_reglement_referentiel.json"
+    referentiel_path: "e10_fe/referentiel/mode_reglement_referentiel.json"
 
   - name: "Devise"
     type: "categorical"
@@ -75,7 +78,7 @@ fields:
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
-    referentiel_path: "e07_fs/referentiel/devise_referentiel.json"
+    referentiel_path: "e10_fe/referentiel/devise_referentiel.json"
 
   - name: "NomDonneurOrdre"
     type: "categorical"
@@ -84,19 +87,14 @@ fields:
       field_out: "NomDonneurOrdre_Normalisé"
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
-      nif_nni: "NifNni"                 # présente sur E07 : le matching DGI par NIF exact est actif
     outlier_tag: "OUTLIER"
-    referentiel_path: "e07_fs/referentiel/nomdonneurordre_referentiel_E07.json"
-    matching:                            # seuils de l'ancien repo, déjà validés en prod sur E07
-      strong_threshold: 92
-      strong_gap: 8
-      arbitrage_min: 70
-      batch_size: 300
-    llm:
+    referentiel_path: "e10_fe/referentiel/nomdonneurordre_referentiel_E10.json"
+    llm:                          # valeurs de l'ancien repo pour E10
       model: "claude-sonnet-5"
-      batch_size: 35             # lots d'arbitrage Claude — valeur de l'ancien repo pour E07
+      batch_size: 35
       max_retry: 3
       retry_wait: 2
+      web_search_max_uses: 3      # outil serveur Claude, facturé à l'usage
 
   - name: "Beneficiaire"
     type: "categorical"
@@ -105,14 +103,19 @@ fields:
       field_out: "Beneficiaire_Normalisé"
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
+      nif_nni: "NifNni"           # matching DGI par NIF exact
     outlier_tag: "OUTLIER"
-    referentiel_path: "e07_fs/referentiel/beneficiaire_referentiel_E07.json"
+    referentiel_path: "e10_fe/referentiel/beneficiaire_referentiel_E10.json"
+    matching:                     # seuils de l'ancien repo pour E10
+      strong_threshold: 92
+      strong_gap: 8
+      arbitrage_min: 70
+      batch_size: 300
     llm:
       model: "claude-sonnet-5"
-      batch_size: 5            # petits lots : chaque item déclenche sa propre recherche web
+      batch_size: 35              # lots d'arbitrage Claude — valeur de l'ancien repo pour E10
       max_retry: 3
       retry_wait: 2
-      web_search_max_uses: 3   # outil serveur Claude, facturé à l'usage
 
   - name: "NatureEconomique"
     type: "categorical"
@@ -122,10 +125,9 @@ fields:
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
-    # Référentiel Flux Sortants de l'ancien repo (catégorie -> labels). Moteur :
-    # référentiel + cache, puis Claude sur liste FERMÉE de labels (décision
-    # confirmée — remplace le modèle d'embeddings local mpnet de l'ancien repo).
-    referentiel_path: "e07_fs/referentiel/nature_economique_referentiel_E07.json"
+    # Référentiel Flux Entrants de l'ancien repo + mapping direct FE ; Claude sur
+    # liste FERMÉE de labels (remplace l'embedding mpnet de l'ancien repo, comme E07).
+    referentiel_path: "e10_fe/referentiel/nature_economique_referentiel_E10.json"
     llm:
       model: "claude-sonnet-5"
       batch_size: 20
@@ -140,7 +142,7 @@ fields:
       ref_transaction: "ReferenceTransaction"
       ref_banque: "RefBanque"
     outlier_tag: "OUTLIER"
-    referentiel_path: "e07_fs/referentiel/pays_addr_keywords.json"
+    referentiel_path: "e10_fe/referentiel/pays_addr_keywords.json"
     llm:
       model: "claude-sonnet-5"
       batch_size: 25
@@ -157,11 +159,9 @@ fields:
       ref_banque: "RefBanque"
       reference_transaction: "ReferenceTransaction"
       pays: "Pays"
-    # Ticket : « dateTransaction < dtCr » — strict (même jour = anomalie). Passer
-    # à true pour autoriser une transaction datée du jour même de dtCr.
+    # Ticket : « dateTransaction < dtCr » — strict (même jour = anomalie), comme E07.
     date_inclusive: false
     # Gabarit « sans activité » du ticket : message dont ReferenceTransaction = NA.
-    # Toutes ces colonnes doivent alors valoir 'NA', Pays 'NoAs', montant et taux 0.
     no_activity:
       template_na_columns:
         - "TypeSwfit"
@@ -169,22 +169,21 @@ fields:
         - "Devise"
         - "NomDonneurOrdre"
         - "NifNni"
-        - "SourceDevise"
         - "Beneficiaire"
         - "Produit"               # lu pour le contrôle uniquement — jamais normalisé
         - "NatureEconomique"
       pays_value: "NoAs"
 
 output:
-  local_dir: "e07_fs/outputs/"
-  classification_path: "PowerBI/E07_FS/E07_FS_classification.xlsx"
+  local_dir: "e10_fe/outputs/"
+  classification_path: "PowerBI/E10_FE/E10_FE_classification.xlsx"
 
 email:
   enabled: true
   attach_workbook_max_mb: 15
   # Libellé utilisé tel quel dans le sujet/corps de l'email (même gabarit que
-  # E11/E09/E08, validé par le Business Analyst) — ex: "Pipeline E07 – FS : ...".
-  display_name: "E07 – FS"
+  # E11/E09/E08/E07, validé par le Business Analyst) — ex: "Pipeline E10 – FE : ...".
+  display_name: "E10 – FE"
 
 schedule:   # métadonnées uniquement — non lues par le pipeline
   frequency: "weekly"

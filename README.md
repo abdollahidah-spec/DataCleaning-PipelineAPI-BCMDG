@@ -10,13 +10,14 @@ sur toutes les APIs qui le contiennent.
 
 > **Portée actuelle : E11 — RDCC** (ticket BCMDG-172), **E09 — PE** (ticket BCMDG-223),
 > **E08 — OCD**, 6 champs (pas de ticket Jira dédié, porté directement depuis l'ancien repo
-> par-champ) et **E07 — FS** (flux sortants : 7 champs catégoriels + validation des
-> transactions, voir *Champs traités — E07_FS*). Ce README documente principalement E11 (le plus complet) ; E09 et E08 suivent
+> par-champ), **E07 — FS** (flux sortants) et **E10 — FE** (flux entrants) — 7 champs
+> catégoriels + validation des transactions chacun, voir *Champs traités — E07_FS* et
+> *Champs traités — E10_FE*. Ce README documente principalement E11 (le plus complet) ; E09 et E08 suivent
 > exactement la même approche (voir *Champs traités* ci-dessous et [e09_pe/](e09_pe/) /
 > [e08_ocd/](e08_ocd/)). E08 combine des champs déterministe+Claude (Devise, NomCorrespondant,
 > Produits), du matching contre la base fiscale DGI (NomDonneurOrdre), du Claude+recherche web
 > (Bénéficiaire) et un référentiel pycountry/babel/geonamescache (Pays) — voir *Champs traités —
-> E08_OCD* pour le détail de chacun. D'autres endpoints (E10_FE...) pourront être ajoutés
+> E08_OCD* pour le détail de chacun. D'autres endpoints pourront être ajoutés
 > de la même façon — chacun son propre package `e0X_xxx/`, sans modifier ce qui existe déjà (voir
 > *Architecture* ci-dessous).
 
@@ -59,6 +60,13 @@ DataCleaning-PipelineAPI-BCMDG/
 │   │                    de validation transactions.py (montant, taux, date, sans activité)
 │   ├── referentiel/    Référentiels + caches warm-start repris de l'ancien repo
 │   ├── config/E07_FS.yaml
+│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, ad_hoc_extraction.py, reports.py
+│   └── outputs/        Sorties locales (gitignored)
+├── e10_fe/            Package auto-contenu de l'API E10 (Flux Entrants) — même structure
+│   ├── fields/         qu'e07_fs/, entités inversées : NomDonneurOrdre étranger (Claude +
+│   │                    recherche web), Beneficiaire local (matching base fiscale DGI)
+│   ├── referentiel/    Référentiels + caches FE/E10 repris de l'ancien repo
+│   ├── config/E10_FE.yaml
 │   ├── pipeline.py, run_pipeline.py, apply_corrections.py, ad_hoc_extraction.py, reports.py
 │   └── outputs/        Sorties locales (gitignored)
 ├── req/                Fichiers de référence externes (base fiscale DGI, entreprises publiques)
@@ -155,8 +163,35 @@ le discriminant des messages « sans activité » (référence = `NA`). `SourceD
 métier) et `Produit` (hors périmètre pour l'instant) ne sont pas normalisés, mais sont contrôlés
 par le gabarit « sans activité ».
 
+Historique limité aux lignes créées depuis le 01/01/2024 (`load.initial_since`, filtre
+`dtCr >= 2024-01-01`, comme E09). NomDonneurOrdre et Beneficiaire résolvent directement un
+libellé déjà égal à un nom légal du référentiel (méthode `MAP_CIBLE`, reprise de l'ancien repo).
+
 ```bash
 python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --input tests/fixtures/e07_fs_sample.csv
+```
+
+## Champs traités — E10_FE
+
+Table `E10EtatBcmFluxEntrants`. Même approche qu'E07, avec les données FE/E10 de l'ancien repo
+et les entités inversées (flux entrants) :
+
+| Champ | Type | Traitement |
+|---|---|---|
+| `TypeSwfit` | catégoriel | Codes SWIFT valides des Flux Entrants (`valid_fe`, pacs.004 inclus) |
+| `ModeReglement` | catégoriel | Identique à E07 |
+| `Devise` | catégoriel | Référentiel ISO 4217 |
+| `NomDonneurOrdre` | catégoriel | Émetteur ÉTRANGER : référentiel E10 + `MAP_CIBLE` + classification locale → Claude + recherche web — voir [e10_fe/fields/nomdonneurordre.py](e10_fe/fields/nomdonneurordre.py) |
+| `Beneficiaire` | catégoriel | Bénéficiaire LOCAL : référentiel E10 + `MAP_CIBLE` → NIF exact (`NifNni`) → entreprises publiques → matching flou DGI + arbitrage Claude — voir [e10_fe/fields/beneficiaire.py](e10_fe/fields/beneficiaire.py) |
+| `NatureEconomique` | catégoriel | Référentiel Flux Entrants (78 labels) + mapping direct FE → Claude sur liste fermée |
+| `Pays` | catégoriel | Identique à E07 (cache FE) |
+| `MontantTransaction`, `TauxDeChange`, `DateTransaction` | validation | Mêmes 4 règles qu'E07 → onglet `Anomalies_Transactions` |
+
+La table E10 n'a **pas de colonne `SourceDevise`** (contrairement au ticket) : elle est absente
+du gabarit « sans activité ». Historique limité aux lignes créées depuis le 01/01/2024.
+
+```bash
+python -m e10_fe.run_pipeline --config e10_fe/config/E10_FE.yaml --input tests/fixtures/e10_fe_sample.csv
 ```
 
 ---
@@ -246,6 +281,8 @@ python -m e11_rdcc.ad_hoc_extraction --config e11_rdcc/config/E11_RDCC.yaml --sq
 # même outil pour E07 (sortie par défaut : e07_fs/outputs/ad_hoc_extraction_{horodatage}.csv)
 python -m e07_fs.ad_hoc_extraction --config e07_fs/config/E07_FS.yaml \
     --query "SELECT TOP 100 * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E7EtatBcmFluxSortants]"
+python -m e10_fe.ad_hoc_extraction --config e10_fe/config/E10_FE.yaml \
+    --query "SELECT TOP 100 * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E10EtatBcmFluxEntrants]"
 ```
 
 Un nouveau fichier horodaté est créé à chaque exécution (sauf si `--output` fixe un nom précis,

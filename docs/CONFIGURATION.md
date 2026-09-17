@@ -7,8 +7,8 @@ Copier `.env.example` vers `.env` et renseigner :
 | Variable | Utilisation |
 |---|---|
 | `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_DRIVER` | Connexion SQL Server — **lecture seule** sur toutes les tables sources (E11, E09, ...) — aucune écriture/DDL autorisée sur cette base |
-| `ANTHROPIC_API_KEY` | Fallback Claude — NomCorrespondant (E11, E08), Produits/NomDonneurOrdre/Beneficiaire/Pays (E08), NomDonneurOrdre/Beneficiaire/NatureEconomique/Pays (E07). Beneficiaire utilise en plus l'outil serveur `web_search` (facturé à l'usage) |
-| `DGI_BASE_PATH`, `PUBLIC_ENT_PATH` | Fichiers de référence externes (E08 et E07 : `NomDonneurOrdre`, `Beneficiaire`) — base fiscale DGI et liste des entreprises publiques. Toujours un chemin explicite en `.env`, jamais en dur dans le code (voir `e08_ocd/fields/_entity_matching.py`). `DGI_BASE_PATH` absent → erreur claire au chargement ; `PUBLIC_ENT_PATH` absent → liste vide, dégradé propre (pas d'erreur, juste aucune entreprise publique reconnue) |
+| `ANTHROPIC_API_KEY` | Fallback Claude — NomCorrespondant (E11, E08), Produits/NomDonneurOrdre/Beneficiaire/Pays (E08), NomDonneurOrdre/Beneficiaire/NatureEconomique/Pays (E07, E10). Beneficiaire utilise en plus l'outil serveur `web_search` (facturé à l'usage) |
+| `DGI_BASE_PATH`, `PUBLIC_ENT_PATH` | Fichiers de référence externes (E08 et E07 : `NomDonneurOrdre`, `Beneficiaire` ; E10 : `Beneficiaire`) — base fiscale DGI et liste des entreprises publiques. Toujours un chemin explicite en `.env`, jamais en dur dans le code (voir `e08_ocd/fields/_entity_matching.py`). `DGI_BASE_PATH` absent → erreur claire au chargement ; `PUBLIC_ENT_PATH` absent → liste vide, dégradé propre (pas d'erreur, juste aucune entreprise publique reconnue) |
 | `OUTPUT_BASE` | **Stockage local/réseau — pas besoin de SharePoint.** Vide = livrables dans `{api}/outputs/` (ex: `e11_rdcc/outputs/`, `e09_pe/outputs/` — fonctionne déjà). Renseigné (ex: `D:\BCM_Outputs` ou `\\serveur\partage`) = tous les livrables écrits sous `{OUTPUT_BASE}/{API_ID}/...` — nom de l'API en MAJUSCULES, sans niveau `outputs/` intermédiaire (ex: `D:\BCM_Outputs\E11_RDCC\`, `D:\BCM_Outputs\E09_PE\`) — un dossier par API, jamais de collision même en lancement parallèle |
 | `STATE_DIR` | **État incrémental — fichier JSON local, pas une table SQL.** Vide = `state/` à la racine du repo, un fichier par API (`state/E11_RDCC_run_state.json`, `state/E09_PE_run_state.json`...). Voir `shared/state_store.py` |
 | `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_URL`, `SHAREPOINT_FOLDER_PATH` | Upload SharePoint (optionnel, pour plus tard — si absent, l'upload est simplement ignoré, pas d'erreur) |
@@ -134,6 +134,19 @@ ModeReglement, Devise, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays), t
 - `TypeSwift` : `flux: "FS"` sélectionne la liste `valid_fs` du référentiel. La colonne source
   s'appelle réellement `TypeSwfit` (orthographe du schéma BCM).
 - `NomDonneurOrdre` : `columns.nif_nni: "NifNni"` et bloc `matching`, comme E08.
+- `load.initial_since: 2024-01-01` : l'Initial Load ne rapatrie que `dtCr >= 2024-01-01`.
+
+## `e10_fe/config/E10_FE.yaml`
+
+`input.table_name: "E10EtatBcmFluxEntrants"`. Même structure qu'E07, avec ces différences :
+
+- `TypeSwift` : `flux: "FE"` (liste `valid_fe`).
+- `NomDonneurOrdre` : pas de `nif_nni` ni de `matching` — émetteur étranger, Claude +
+  recherche web (`llm.batch_size: 35`, `llm.web_search_max_uses: 3`, valeurs de l'ancien repo).
+- `Beneficiaire` : `columns.nif_nni: "NifNni"` et bloc `matching` (92/8/70/300),
+  `llm.batch_size: 35` pour l'arbitrage DGI.
+- `no_activity.template_na_columns` sans `SourceDevise` (colonne absente de la table).
+- `load.initial_since: 2024-01-01`.
 
 ## Installation
 

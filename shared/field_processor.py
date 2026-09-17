@@ -161,6 +161,9 @@ _KNOWN_BEFORE_RUN_METHODS = {
     # PREFIX (e07_fs/fields/typeswift.py) : « 103 » -> « MT 103 », déduction
     # déterministe depuis le référentiel, même niveau de confiance que MAP.
     "PREFIX",
+    # MAP_CIBLE (_entity_matching.index_valeurs_cibles) : le libellé est déjà un nom
+    # légal cible du référentiel — résolution déterministe, comme MAP.
+    "MAP_CIBLE",
 }
 
 

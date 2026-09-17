@@ -132,7 +132,7 @@ dont une colonne manque sont ignorés silencieusement (pas d'erreur — une requ
 peut légitimement ne couvrir que certains champs). Écrit une extraction locale (colonnes de la
 requête + leurs versions nettoyées insérées juste après), sans toucher SharePoint/email/état
 incrémental. Voir [README.md](../README.md#extraction-ad-hoc-requête-sql-personnalisée). (Outil
-disponible pour E11 et E07 (`e07_fs/ad_hoc_extraction.py`) — pas encore porté pour E09/E08.)
+disponible pour E11, E07 et E10 (`e07_fs/`, `e10_fe/ad_hoc_extraction.py`) — pas encore porté pour E09/E08.)
 
 ---
 
@@ -194,3 +194,20 @@ sa règle NoAs spécifique (« NA » est le code ISO de la Namibie).
 Une ligne en échec sur plusieurs règles produit une ligne d'anomalie par règle (onglet
 `Anomalies_Transactions`). `Produit` est hors périmètre pour l'instant : non normalisé, il est
 seulement contrôlé par le gabarit « sans activité », comme `SourceDevise`.
+
+Pour E07 comme pour E10, l'historique traité est limité aux lignes créées depuis le
+01/01/2024 (`dtCr >= 2024-01-01`).
+
+## E10_FE (Flux Entrants)
+
+Mêmes règles qu'E07 (champs catégoriels, règle NA témoin `ReferenceTransaction`, 4 règles de
+validation des transactions), avec les données FE/E10 de l'ancien repo. Sur un flux entrant, les
+rôles des entités s'inversent :
+
+- **NomDonneurOrdre** — émetteur étranger : référentiel E10, puis Claude + recherche web.
+- **Beneficiaire** — entité locale : NIF exact et matching sur la base fiscale DGI, arbitrage
+  Claude si plusieurs candidats sont proches.
+
+La table ne contient pas `SourceDevise` : cette colonne n'est donc pas contrôlée dans le gabarit
+« sans activité ». Un `TauxDeChange` NULL (≈ 1 % des lignes) est signalé par
+`RATE_NON_NEGATIVE` (valeur non numérique).

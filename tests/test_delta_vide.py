@@ -19,6 +19,7 @@ _APIS = [
     ("e09_pe", "E09_PE", "e09_pe.pipeline", "E09Pipeline"),
     ("e08_ocd", "E08_OCD", "e08_ocd.pipeline", "E08Pipeline"),
     ("e07_fs", "E07_FS", "e07_fs.pipeline", "E07Pipeline"),
+    ("e10_fe", "E10_FE", "e10_fe.pipeline", "E10Pipeline"),
 ]
 
 

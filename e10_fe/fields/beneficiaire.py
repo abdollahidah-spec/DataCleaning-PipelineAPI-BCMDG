@@ -1,16 +1,20 @@
 """
-e07_fs/fields/nomdonneurordre.py
-=====================================
-Normalisation du champ NomDonneurOrdre pour E07_FS — porté depuis
-DataCleaning-PipelineField-BCMDG/nomdonneurordre/normalize_nomdonneurordre.py
-(fonction `treating_nomdonneurordre_dgi`, seule variante utilisée par E07 — la
-variante E10, Claude+recherche web sans base DGI, n'est pas portée ici).
+e10_fe/fields/beneficiaire.py
+===============================
+Normalisation du champ Beneficiaire pour E10_FE (Flux Entrants) — porté depuis
+DataCleaning-PipelineField-BCMDG/beneficiaire/normalize_beneficiaire.py
+(fonction `treating_beneficiaire_dgi`).
+
+Sur un flux ENTRANT, le bénéficiaire est l'entité LOCALE qui reçoit les fonds :
+matching contre la base fiscale DGI (NIF exact, puis rapidfuzz + arbitrage
+Claude). C'est l'inverse d'E07 (flux sortants), où ce matching DGI s'applique au
+donneur d'ordre.
 
 COLONNES AJOUTÉES :
-  NomDonneurOrdre_clean       — valeur nettoyée (clean_label)
-  NomDonneurOrdre_Normalisé   — nom légal officiel en MAJUSCULES / 'NA' / 'OUTLIER'
-  NomDonneurOrdre_method      — voir méthodes ci-dessous
-  NomDonneurOrdre_check       — True si OUTLIER
+  Beneficiaire_clean       — valeur nettoyée (clean_label)
+  Beneficiaire_Normalisé   — nom légal officiel en MAJUSCULES / 'NA' / 'OUTLIER'
+  Beneficiaire_method      — voir méthodes ci-dessous
+  Beneficiaire_check       — True si OUTLIER
 
 MÉTHODES POSSIBLES :
   WARM                  — cache validated_classif (résolution Claude passée)
@@ -25,10 +29,10 @@ MÉTHODES POSSIBLES :
   DGI_FUZZY_STRONG      — match rapidfuzz net (score fort + écart net avec le 2e)
   DGI_CLAUDE_ARBITRAGE  — candidats DGI proches, tranché par Claude
   DGI_NO_MATCH          — aucun candidat DGI plausible, pas d'appel Claude
-  OUTLIER                — non résolu / valeur de bruit / échec technique Claude
+  OUTLIER               — non résolu / valeur de bruit / échec technique Claude
 
-CASCADE (identique à l'ancien repo, famille "DGI" d'E07/E07) :
-  1. Warm-start → MAP_CIBLE → référentiel → règle NA (raccourci) → NIF exact (base DGI)
+CASCADE (identique à l'ancien repo) :
+  1. Warm-start → MAP_CIBLE → référentiel → règle NA (raccourci) → NIF exact (DGI)
      → entreprise publique → outlier évident (raccourci)
   2. Classification locale (particulier / ETS personnel / ETS outlier)
   3. Matching DGI : exact-normalisé → rapidfuzz (fort = direct, faible = OUTLIER,
@@ -36,13 +40,12 @@ CASCADE (identique à l'ancien repo, famille "DGI" d'E07/E07) :
   4. Redirection entreprise publique si le match DGI final en désigne une
 
 PERSISTANCE DU CACHE CLAUDE : seules les résolutions d'arbitrage (payantes) sont
-écrites dans validated_classif_nomdonneurordre_e07_fs.json — les résolutions
-déterministes (référentiel, NIF exact, classification locale, matching rapidfuzz)
-sont recalculées à chaque run.
+écrites dans validated_classif_beneficiaire_e10_fe.json — les résolutions
+déterministes sont recalculées à chaque run.
 
-RÈGLE NA — témoin ReferenceTransaction (même convention que les autres champs E07_FS) :
-  NomDonneurOrdre == 'NA'  ET  ReferenceTransaction == 'NA'   → 'NA'
-  NomDonneurOrdre == 'NA'  ET  ReferenceTransaction != 'NA'   → OUTLIER
+RÈGLE NA — témoin ReferenceTransaction (même convention que les autres champs E10_FE) :
+  Beneficiaire == 'NA'  ET  ReferenceTransaction == 'NA'   → 'NA'
+  Beneficiaire == 'NA'  ET  ReferenceTransaction != 'NA'   → OUTLIER
 """
 from __future__ import annotations
 
@@ -55,7 +58,7 @@ from shared.claude_client import call_claude_dgi_arbitrage_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
 
-from e07_fs.fields._entity_matching import (
+from e10_fe.fields._entity_matching import (
     classify_local,
     clean_label,
     est_outlier_evident,
@@ -73,6 +76,26 @@ from e07_fs.fields._entity_matching import (
 
 _REFERENTIEL_DIR = Path(__file__).parent.parent / "referentiel"
 
+# Prompt de l'ancien repo (_SYSTEM_PROMPT_BENEF_DGI_ARBITRAGE).
+_SYSTEM_PROMPT_BENEF_DGI_ARBITRAGE = (
+    "Tu es un expert du registre fiscal mauritanien (DGI - Direction Generale des Impots).\n"
+    "Pour chaque item, on te donne un libelle designant le BENEFICIAIRE d'un flux entrant, "
+    "saisi par un operateur bancaire, et une liste courte (2-3) de raisons sociales "
+    "candidates issues de la base DGI qui lui ressemblent textuellement, avec leur NIF "
+    "et forme juridique.\n"
+    "Determine SI ET SEULEMENT SI le libelle designe sans ambiguite l'une de ces raisons "
+    "sociales candidates (la MEME entite legale, pas seulement un nom proche ou une entite "
+    "homonyme differente).\n"
+    "REGLES STRICTES :\n"
+    "- Si un candidat correspond avec certitude, reponds avec son numero (1, 2 ou 3).\n"
+    "- Si aucun candidat ne correspond avec certitude, ou si plusieurs candidats sont "
+    "plausibles sans element distinctif suffisant pour trancher (homonymie, cas ambigu), "
+    "reponds exactement OUTLIER. Ne devine JAMAIS.\n"
+    "- Tu reponds UNIQUEMENT avec des lignes au format exact : N. REPONSE (ou REPONSE est "
+    "un numero de candidat ou OUTLIER).\n"
+    "- Une ligne par item, dans le meme ordre. Zero explication, zero ligne vide."
+)
+
 
 def load_referentiel(path: str | Path) -> dict:
     """Structure attendue : {"mapping": {"<brut>": "<normalisé>"}}."""
@@ -82,7 +105,7 @@ def load_referentiel(path: str | Path) -> dict:
 
 
 def _warm_start_path(api_id: str) -> Path:
-    return _REFERENTIEL_DIR / f"validated_classif_nomdonneurordre_{api_id.lower()}.json"
+    return _REFERENTIEL_DIR / f"validated_classif_beneficiaire_{api_id.lower()}.json"
 
 
 def load_warm_start(api_id: str) -> dict:
@@ -104,27 +127,27 @@ def save_warm_start(api_id: str, new_entries: dict, verbose: bool = False) -> No
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
     if verbose:
-        print(f"  Warm-start NomDonneurOrdre {api_id} : +{len(new_entries)} modalité(s) mise(s) en cache")
+        print(f"  Warm-start Beneficiaire {api_id} : +{len(new_entries)} modalité(s) mise(s) en cache")
 
 
-def treating_nomdonneurordre(
+def treating_beneficiaire(
     df:           pd.DataFrame,
-    corr_col:     str  = "NomDonneurOrdre",
+    corr_col:     str  = "Beneficiaire",
     ref_col:      str  = "ReferenceTransaction",
     nif_col:      str  = "NifNni",
     ref:          dict = None,
     dgi_index:    dict = None,
     public_index: dict = None,
-    api_id:       str  = "E07_FS",
+    api_id:       str  = "E10_FE",
     cfg:          dict = None,
     warm_start:   bool = True,
     verbose:      bool = False,
 ) -> pd.DataFrame:
-    """Normalise la colonne NomDonneurOrdre. Traitement sur paires (label, nif) uniques."""
+    """Normalise la colonne Beneficiaire. Traitement sur paires (label, nif) uniques."""
     df = df.copy()
 
     if ref is None:
-        ref = load_referentiel(_REFERENTIEL_DIR / "nomdonneurordre_referentiel_E07.json")
+        ref = load_referentiel(_REFERENTIEL_DIR / "beneficiaire_referentiel_E10.json")
     ref_cibles = index_valeurs_cibles(ref)
 
     if dgi_index is None:
@@ -140,17 +163,15 @@ def treating_nomdonneurordre(
     arbitrage_min    = matching_cfg.get("arbitrage_min", 70)
     fuzzy_batch_size = matching_cfg.get("batch_size", 300)
 
-    ws_cache: dict = {}
-    if warm_start:
-        ws_cache = load_warm_start(api_id)
-        if verbose:
-            print(f"  Warm-start NomDonneurOrdre {api_id} : {len(ws_cache)} modalités connues")
+    ws_cache: dict = load_warm_start(api_id) if warm_start else {}
+    if verbose and warm_start:
+        print(f"  Warm-start Beneficiaire {api_id} : {len(ws_cache)} modalités connues")
 
     # Nettoyage sur valeurs uniques puis Series.map(dict) : jamais d'appel Python
-    # par ligne sur le million de lignes de la table.
+    # par ligne sur les ~3 M de lignes de la table.
     labels_uniques = df[corr_col].dropna().unique()
     label_clean_col = df[corr_col].map({v: clean_label(v) for v in labels_uniques}).fillna("")
-    df["NomDonneurOrdre_clean"] = label_clean_col
+    df["Beneficiaire_clean"] = label_clean_col
     if nif_col in df.columns:
         nifs_uniques = df[nif_col].dropna().unique()
         nif_clean_col = df[nif_col].map({v: nettoyer_nifnni(v) for v in nifs_uniques}).fillna("")
@@ -249,7 +270,9 @@ def treating_nomdonneurordre(
     for debut in range(0, total, arbitrage_batch_size):
         batch_keys  = keys[debut:debut + arbitrage_batch_size]
         batch_items = items[debut:debut + arbitrage_batch_size]
-        reponses    = call_claude_dgi_arbitrage_batch(batch_items, cfg)
+        reponses    = call_claude_dgi_arbitrage_batch(
+            batch_items, cfg, system_prompt=_SYSTEM_PROMPT_BENEF_DGI_ARBITRAGE
+        )
         if reponses is None:
             print(f"  [CLAUDE] échec technique sur le batch d'arbitrage {debut}-{debut + len(batch_keys)} "
                   f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
@@ -279,9 +302,6 @@ def treating_nomdonneurordre(
             label_resolution[lab] = ("OUTLIER", "DGI_CLAUDE_ARBITRAGE")
 
     # ── Redirection entreprises publiques ────────────────────────────────────────
-    # Un match DGI (exact, fort, ou arbitré) peut désigner une entreprise publique
-    # connue sous une autre orthographe que public_ent.xlsx — on redirige alors
-    # vers le short name canonique.
     for lab, (val, meth) in list(label_resolution.items()):
         if val != "OUTLIER" and meth in ("DGI_EXACT_NORM", "DGI_FUZZY_STRONG", "DGI_CLAUDE_ARBITRAGE"):
             pub_short = match_public_entity(clean_label(val), public_index)
@@ -303,31 +323,30 @@ def treating_nomdonneurordre(
 
     resolution = pd.DataFrame(
         [(lab, nif, v[0], v[1]) for (lab, nif), v in result_by_pair.items()],
-        columns=["label", "nif", "NomDonneurOrdre_Normalisé", "NomDonneurOrdre_method"],
+        columns=["label", "nif", "Beneficiaire_Normalisé", "Beneficiaire_method"],
     ).astype({"label": object, "nif": object})
     lignes = pd.DataFrame({"label": label_clean_col.astype(object).to_numpy(),
                            "nif": nif_clean_col.astype(object).to_numpy()})
     joint = lignes.merge(resolution, on=["label", "nif"], how="left")
-    df["NomDonneurOrdre_Normalisé"] = joint["NomDonneurOrdre_Normalisé"].to_numpy()
-    df["NomDonneurOrdre_method"]    = joint["NomDonneurOrdre_method"].to_numpy()
-    df["_ws_hit"] = df["NomDonneurOrdre_method"] == "WARM"
+    df["Beneficiaire_Normalisé"] = joint["Beneficiaire_Normalisé"].to_numpy()
+    df["Beneficiaire_method"]    = joint["Beneficiaire_method"].to_numpy()
+    df["_ws_hit"] = df["Beneficiaire_method"] == "WARM"
 
     if ref_col in df.columns:
         iso, mth = apply_na_rule_frame(
-            df, corr_col, ref_col, "NomDonneurOrdre_Normalisé", "NomDonneurOrdre_method"
+            df, corr_col, ref_col, "Beneficiaire_Normalisé", "Beneficiaire_method"
         )
-        df["NomDonneurOrdre_Normalisé"] = iso
-        df["NomDonneurOrdre_method"]    = mth
+        df["Beneficiaire_Normalisé"] = iso
+        df["Beneficiaire_method"]    = mth
 
-    df["NomDonneurOrdre_check"] = df["NomDonneurOrdre_Normalisé"] == "OUTLIER"
+    df["Beneficiaire_check"] = df["Beneficiaire_Normalisé"] == "OUTLIER"
     return df
 
 
-def build_full_classification_nomdonneurordre(ref: dict, api_id: str, col_in: str, col_out: str) -> pd.DataFrame:
+def build_full_classification_beneficiaire(ref: dict, api_id: str, col_in: str, col_out: str) -> pd.DataFrame:
     """Table de classification CUMULATIVE (référentiel + cache warm-start Claude
-    d'arbitrage) — les résolutions DGI déterministes (NIF/rapidfuzz/classification
-    locale) ne sont PAS incluses ici : elles sont recalculées à chaque run à partir
-    des données du run lui-même, pas d'un référentiel figé (voir docstring module)."""
+    d'arbitrage) — les résolutions DGI déterministes ne sont pas incluses : elles
+    sont recalculées à chaque run à partir des données du run lui-même."""
     combined = dict(ref)
     combined.update(load_warm_start(api_id))
 
@@ -337,17 +356,16 @@ def build_full_classification_nomdonneurordre(ref: dict, api_id: str, col_in: st
     return df.drop_duplicates().sort_values([col_out, col_in]).reset_index(drop=True)
 
 
-def build_nomdonneurordre_processor(field_cfg: dict) -> CategoricalFieldProcessor:
-    """Factory : construit le FieldProcessor NomDonneurOrdre à partir du bloc YAML `fields[]`."""
+def build_beneficiaire_processor(field_cfg: dict) -> CategoricalFieldProcessor:
+    """Factory : construit le FieldProcessor Beneficiaire à partir du bloc YAML `fields[]`."""
     cols = field_cfg["columns"]
-    referentiel_path = Path(field_cfg["referentiel_path"])
-    ref = load_referentiel(referentiel_path)
+    ref = load_referentiel(Path(field_cfg["referentiel_path"]))
     dgi_index = prepare_dgi_index(load_dgi_base())
     public_index = prepare_public_ent_index(load_public_entities())
 
     return CategoricalFieldProcessor(
         field_name=field_cfg["name"],
-        treating_fn=treating_nomdonneurordre,
+        treating_fn=treating_beneficiaire,
         treating_kwargs={
             "corr_col": cols["field"],
             "ref_col": cols["ref_transaction"],
@@ -367,7 +385,7 @@ def build_nomdonneurordre_processor(field_cfg: dict) -> CategoricalFieldProcesso
         exclude_suffixes=("_clean", "_method", "_check"),
         clean_fn=clean_label,
         save_warm_start_fn=save_warm_start,
-        classification_fn=lambda api_id: build_full_classification_nomdonneurordre(
+        classification_fn=lambda api_id: build_full_classification_beneficiaire(
             ref, api_id, cols["field"], cols["field_out"]
         ),
     )

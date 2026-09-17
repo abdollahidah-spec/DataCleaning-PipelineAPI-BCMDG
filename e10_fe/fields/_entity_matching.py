@@ -1,12 +1,12 @@
 """
-e07_fs/fields/_entity_matching.py
+e10_fe/fields/_entity_matching.py
 ======================================
 Socle de nettoyage/classification/matching PARTAGÉ par NomDonneurOrdre et
-Bénéficiaire (E07_FS) — porté depuis DataCleaning-PipelineField-BCMDG/
+Bénéficiaire (E10_FE) — porté depuis DataCleaning-PipelineField-BCMDG/
 nomdonneurordre/normalize_nomdonneurordre.py. Dans l'ancien repo, beneficiaire/
 normalize_beneficiaire.py IMPORTAIT ces fonctions directement depuis
 nomdonneurordre/ pour garantir que les deux champs restent alignés ; ici,
-factorisé dans ce module privé au package e07_fs/fields/ (pas de dépendance
+factorisé dans ce module privé au package e10_fe/fields/ (pas de dépendance
 croisée entre PACKAGES d'API — decision H — mais un module partagé DANS le même
 package reste cohérent, les deux champs doivent utiliser EXACTEMENT la même
 logique de nettoyage/classification).
@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process
 
-from e07_fs.fields._keywords import KEYWORDS_ENTREPRISE, OUTLIERS_EVIDENTS, PRENOMS_KEYWORDS
+from e10_fe.fields._keywords import KEYWORDS_ENTREPRISE, OUTLIERS_EVIDENTS, PRENOMS_KEYWORDS
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NETTOYAGE

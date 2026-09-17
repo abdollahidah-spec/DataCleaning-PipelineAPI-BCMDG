@@ -205,13 +205,17 @@ _SYSTEM_PROMPT_DGI_ARBITRAGE = (
 
 
 def call_claude_dgi_arbitrage_batch(
-    items: list[dict],
-    cfg:   dict | None = None,
+    items:         list[dict],
+    cfg:           dict | None = None,
+    system_prompt: str | None = None,
 ) -> list[int | None] | None:
     """
     Tranche, pour chaque item {"label": str, "candidates": [{"raison_sociale","nif",
     "forme_juridique"}, ...]}, quel candidat (1-based index) correspond au libellé —
     ou None si aucun candidat ne correspond avec certitude (OUTLIER).
+
+    `system_prompt` : prompt propre à l'API appelante (ex: bénéficiaire d'un flux
+    entrant pour E10) ; par défaut, le prompt générique ci-dessus.
 
     Retourne None (pas une liste) en cas d'échec technique — jamais mis en cache par
     l'appelant, cf. call_claude_nomcorrespondant_batch.
@@ -247,7 +251,7 @@ def call_claude_dgi_arbitrage_batch(
             resp = client.messages.create(
                 model=model,
                 max_tokens=40 * len(items) + 50,
-                system=_SYSTEM_PROMPT_DGI_ARBITRAGE,
+                system=system_prompt or _SYSTEM_PROMPT_DGI_ARBITRAGE,
                 messages=[{"role": "user", "content": user_prompt}],
             )
             text = "".join(
@@ -316,14 +320,19 @@ _SYSTEM_PROMPT_BENEF_WEB = (
 
 
 def call_claude_beneficiaire_web_batch(
-    batch: list[str],
-    cfg:   dict | None = None,
+    batch:         list[str],
+    cfg:           dict | None = None,
+    system_prompt: str | None = None,
+    user_intro:    str | None = None,
 ) -> list[str | None] | None:
     """
-    Résout un batch de libellés Beneficiaire (E08, bénéficiaire étranger) via
-    Claude + recherche web réelle (tool serveur web_search). Même contrat que
-    call_claude_nomcorrespondant_batch : liste de labels/None dans l'ordre du
-    batch, ou None si échec technique (pas de cache).
+    Résout un batch de libellés d'entités ÉTRANGÈRES (Beneficiaire E07/E08,
+    NomDonneurOrdre E10) via Claude + recherche web réelle (tool serveur
+    web_search). Même contrat que call_claude_nomcorrespondant_batch : liste de
+    labels/None dans l'ordre du batch, ou None si échec technique (pas de cache).
+
+    `system_prompt` / `user_intro` : formulation propre au champ appelant ; par
+    défaut, celle du bénéficiaire (comportement historique E07/E08).
 
     Batch volontairement petit par défaut (cfg["llm"]["batch_size"], défaut 5) pour
     garder une recherche pertinente par item.
@@ -344,7 +353,7 @@ def call_claude_beneficiaire_web_batch(
     client = anthropic.Anthropic(api_key=api_key)
 
     items       = "\n".join(f"{i + 1}. {v}" for i, v in enumerate(batch))
-    user_prompt = f"Libellés de bénéficiaires à identifier :\n{items}"
+    user_prompt = f"{user_intro or 'Libellés de bénéficiaires à identifier'} :\n{items}"
 
     text = None
     for attempt in range(1, max_retry + 1):
@@ -352,7 +361,7 @@ def call_claude_beneficiaire_web_batch(
             resp = client.messages.create(
                 model=model,
                 max_tokens=1024 + 60 * len(batch),
-                system=_SYSTEM_PROMPT_BENEF_WEB,
+                system=system_prompt or _SYSTEM_PROMPT_BENEF_WEB,
                 messages=[{"role": "user", "content": user_prompt}],
                 tools=[{
                     "type":     "web_search_20250305",

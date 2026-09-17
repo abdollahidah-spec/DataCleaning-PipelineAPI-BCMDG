@@ -15,12 +15,13 @@ restent ainsi toujours alignés sur la même logique.
 COLONNES AJOUTÉES :
   Beneficiaire_clean       — valeur nettoyée (clean_label)
   Beneficiaire_Normalisé   — nom légal officiel en MAJUSCULES / 'NA' / 'OUTLIER'
-  Beneficiaire_method      — 'WARM' / 'MAP' / 'PUBLIC_ENT' / 'PARTICULIER' /
+  Beneficiaire_method      — 'WARM' / 'MAP_CIBLE' / 'MAP' / 'PUBLIC_ENT' / 'PARTICULIER' /
                                'ETS_PERSONNEL' / 'ETS_OUTLIER' / 'CLAUDE' / 'OUTLIER'
   Beneficiaire_check       — True si OUTLIER
 
 CASCADE :
-  1. Warm-start → référentiel → règle NA (raccourci) → entreprise publique
+  1. Warm-start → valeur déjà cible du référentiel (MAP_CIBLE) → référentiel
+     → règle NA (raccourci) → entreprise publique
      → outlier évident (raccourci)
   2. Classification locale (particulier / ETS personnel / ETS outlier)
   3. Fallback Claude (recherche web réelle) → CLAUDE si résolu, sinon OUTLIER
@@ -47,6 +48,7 @@ from e07_fs.fields._entity_matching import (
     classify_local,
     clean_label,
     est_outlier_evident,
+    index_valeurs_cibles,
     load_public_entities,
     match_public_entity,
     prepare_public_ent_index,
@@ -104,6 +106,7 @@ def treating_beneficiaire(
 
     if ref is None:
         ref = load_referentiel(_REFERENTIEL_DIR / "beneficiaire_referentiel_E07.json")
+    ref_cibles = index_valeurs_cibles(ref)
 
     if public_index is None:
         public_index = prepare_public_ent_index(load_public_entities())
@@ -132,6 +135,10 @@ def treating_beneficiaire(
 
         if warm_start and clean in ws_cache:
             result_map[v] = (ws_cache[clean], "WARM")
+            continue
+
+        if clean in ref_cibles:
+            result_map[v] = (ref_cibles[clean], "MAP_CIBLE")
             continue
 
         if clean in ref:
