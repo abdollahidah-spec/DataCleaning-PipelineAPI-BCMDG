@@ -119,7 +119,9 @@ class BaseApiPipeline:
         return _report
 
     def load_data(self, mode: str, override_input: Optional[str]) -> tuple[pd.DataFrame, str]:
-        from shared.db_connector import existing_columns, load_file, load_table, load_table_delta
+        from shared.db_connector import (
+            column_types, load_file, load_table, load_table_delta, long_text_columns,
+        )
         from shared.query_columns import projection_for, reconcile_with_table
 
         if override_input:
@@ -143,17 +145,25 @@ class BaseApiPipeline:
         # échec "Invalid column name" sur une colonne optionnelle absente, et
         # signale tout de suite un écart YAML/table plutôt qu'après plusieurs
         # minutes de traitement.
+        cast_text: set = set()
         if columns:
-            available = existing_columns(table)
-            if available:
-                columns, absentes = reconcile_with_table(self.cfg, columns, available)
+            types = column_types(table)
+            if types:
+                columns, absentes = reconcile_with_table(self.cfg, columns, set(types))
                 if absentes:
                     self.logger.warning(
                         "Colonne(s) configurée(s) mais absente(s) de la table, ignorée(s) : %s",
                         ", ".join(absentes))
+                if load_cfg.get("cast_max_text", True):
+                    cast_text = long_text_columns(types) & set(columns)
 
         self.logger.info("Colonnes rapatriées : %s",
                           f"{len(columns)} ({', '.join(columns)})" if columns else "toutes (SELECT *)")
+        if cast_text:
+            self.logger.info("%s colonne(s) texte NVARCHAR(MAX) lue(s) en NVARCHAR(4000) "
+                              "(lecture accélérée, load.cast_max_text)", len(cast_text))
+        retries = int(load_cfg.get("retries") or 0)
+        retry_wait = float(load_cfg.get("retry_wait_seconds") or 30)
 
         if resolved_mode == "initial":
             since = _parse_initial_since(load_cfg.get("initial_since"))
@@ -163,7 +173,8 @@ class BaseApiPipeline:
             self.logger.info("Chargement initial en cours (peut être long selon le volume)…")
             df = load_table(table, columns=columns, chunk_size=chunk_size,
                             progress=self._load_progress() if chunk_size else None,
-                            dt_cr_col=dt_cr_col, since=since)
+                            dt_cr_col=dt_cr_col, since=since, cast_text=cast_text,
+                            retries=retries, retry_wait=retry_wait)
         elif resolved_mode == "incremental":
             state = self._get_state()
             since = state.last_dtcr_processed if state else None
@@ -174,7 +185,8 @@ class BaseApiPipeline:
                 )
             self.logger.info("Chargement du delta depuis %s…", since)
             df = load_table_delta(table, dt_cr_col, since, columns=columns, chunk_size=chunk_size,
-                                   progress=self._load_progress() if chunk_size else None)
+                                   progress=self._load_progress() if chunk_size else None,
+                                   cast_text=cast_text, retries=retries, retry_wait=retry_wait)
         else:
             raise ValueError(f"Mode inconnu : {resolved_mode!r}")
 

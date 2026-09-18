@@ -13,6 +13,7 @@ s'est bien passé sans que personne ne le remarque.
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -67,49 +68,91 @@ def get_engine():
     return create_engine(url)
 
 
-def _select_clause(columns: Optional[list]) -> str:
+# Longueur de lecture des colonnes texte NVARCHAR(MAX) (voir _select_clause).
+_CAST_TEXT_LENGTH = 4000
+
+# Marqueurs d'une coupure réseau PASSAGÈRE (pilotes ODBC SQL Server, en anglais ou
+# en français) — seules ces erreurs déclenchent une nouvelle tentative ; une erreur
+# SQL (colonne inconnue, droits...) échoue immédiatement.
+_TRANSIENT_MARKERS = (
+    "08S01", "08001", "10053", "10054", "10060", "DBNETLIB", "COMMUNICATION LINK",
+    "TCP PROVIDER", "CONNECTIONWRITE", "CONNECTIONREAD", "CONNECTION RESET",
+    "ERREUR RÉSEAU", "NETWORK-RELATED", "GENERAL NETWORK ERROR",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    message = str(exc).upper()
+    return any(marqueur in message for marqueur in _TRANSIENT_MARKERS)
+
+
+def _select_clause(columns: Optional[list], cast_text: Optional[set] = None) -> str:
     """Projection explicite des colonnes, ou `*` si non déterminée (voir
-    shared/query_columns.py) — évite de rapatrier des colonnes inutilisées."""
+    shared/query_columns.py) — évite de rapatrier des colonnes inutilisées.
+
+    `cast_text` : colonnes NVARCHAR(MAX) à lire en NVARCHAR(4000). Le pilote ODBC
+    lit une colonne (MAX) cellule par cellule ; castée, elle est lue par blocs —
+    mesuré sur E10 : 20 000 lignes en 11,6 s tel quel, 2,7 s castées. La plus
+    longue valeur réelle relevée sur les 5 tables (17/09/2026) fait 149 caractères."""
     if not columns:
         return "*"
-    return ", ".join(f"[{c}]" for c in columns)
+    cast_text = cast_text or set()
+    return ", ".join(
+        f"CAST([{c}] AS NVARCHAR({_CAST_TEXT_LENGTH})) AS [{c}]" if c in cast_text else f"[{c}]"
+        for c in columns
+    )
 
 
 def _run_query(query, params: Optional[dict], operation: str, table_name: str,
-                chunk_size: Optional[int] = None, progress=None) -> pd.DataFrame:
+                chunk_size: Optional[int] = None, progress=None,
+                retries: int = 0, retry_wait: float = 30) -> pd.DataFrame:
     from sqlalchemy.exc import SQLAlchemyError
 
     host = os.getenv("DB_HOST")
     port = os.getenv("DB_PORT")
     db = os.getenv("DB_NAME", "DATAWAREHOUSE_SA_PROD")
-    try:
-        with get_engine().connect() as conn:
-            if chunk_size:
-                # Lecture par paquets : donne une progression pendant un
-                # chargement long (sinon aucun retour pendant des heures) et
-                # évite de garder un seul résultat géant côté curseur.
-                frames, total = [], 0
-                for chunk in pd.read_sql(query, conn, params=params or {}, chunksize=chunk_size):
-                    frames.append(chunk)
-                    total += len(chunk)
-                    if progress:
-                        progress(total)
-                df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-            else:
-                df = pd.read_sql(query, conn, params=params or {})
-    except DataSourceError:
-        raise
-    except SQLAlchemyError as exc:
-        raise DataSourceError(
-            f"Échec de {operation} sur la table '{table_name}' (base '{db}' — {host}:{port}) : "
-            f"{_short_db_error(exc)}. Vérifie l'accès réseau à la base, les credentials dans .env, "
-            f"et que la table/colonne existe bien telle que configurée dans le YAML."
-        ) from exc
-    except Exception as exc:
-        raise DataSourceError(
-            f"Échec inattendu lors de {operation} sur la table '{table_name}' (base '{db}') : "
-            f"{_short_db_error(exc)}."
-        ) from exc
+    tentatives = max(int(retries), 0) + 1
+    for tentative in range(1, tentatives + 1):
+        try:
+            with get_engine().connect() as conn:
+                if chunk_size:
+                    # Lecture par paquets : donne une progression pendant un
+                    # chargement long (sinon aucun retour pendant des heures) et
+                    # évite de garder un seul résultat géant côté curseur.
+                    frames, total = [], 0
+                    for chunk in pd.read_sql(query, conn, params=params or {}, chunksize=chunk_size):
+                        frames.append(chunk)
+                        total += len(chunk)
+                        if progress:
+                            progress(total)
+                    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+                else:
+                    df = pd.read_sql(query, conn, params=params or {})
+            break
+        except DataSourceError:
+            raise
+        except SQLAlchemyError as exc:
+            if _is_transient(exc) and tentative < tentatives:
+                # Coupure passagère (constaté : Initial Load E10 interrompu après
+                # 43 min par « ConnectionWrite (10054) ») : on relit depuis le début,
+                # les paquets déjà lus sont abandonnés — jamais de doublons.
+                attente = retry_wait * tentative
+                print(f"  [AVERTISSEMENT] Coupure réseau pendant {operation} sur '{table_name}' "
+                      f"(tentative {tentative}/{tentatives}) : {_short_db_error(exc)} — nouvelle "
+                      f"tentative dans {attente:.0f} s, lecture reprise depuis le début.")
+                time.sleep(attente)
+                continue
+            suffixe = f" (échec après {tentative} tentative(s))" if tentative > 1 else ""
+            raise DataSourceError(
+                f"Échec de {operation} sur la table '{table_name}' (base '{db}' — {host}:{port}) : "
+                f"{_short_db_error(exc)}{suffixe}. Vérifie l'accès réseau à la base, les credentials "
+                f"dans .env, et que la table/colonne existe bien telle que configurée dans le YAML."
+            ) from exc
+        except Exception as exc:
+            raise DataSourceError(
+                f"Échec inattendu lors de {operation} sur la table '{table_name}' (base '{db}') : "
+                f"{_short_db_error(exc)}."
+            ) from exc
 
     if df.empty:
         print(f"  [AVERTISSEMENT] {operation} sur '{table_name}' n'a retourné AUCUNE ligne "
@@ -117,33 +160,55 @@ def _run_query(query, params: Optional[dict], operation: str, table_name: str,
     return df
 
 
-def existing_columns(table_name: str) -> set:
+def column_types(table_name: str) -> dict:
     """
-    Colonnes réellement présentes dans la table (INFORMATION_SCHEMA) — requête de
-    métadonnées, quasi instantanée. Permet de ne jamais demander une colonne
-    absente (échec `Invalid column name`) et de signaler immédiatement un écart
-    entre le YAML et le schéma réel, au lieu d'échouer bien plus tard.
+    {colonne -> (type SQL en minuscules, longueur max ou None)} d'après
+    INFORMATION_SCHEMA — requête de métadonnées, quasi instantanée. Longueur -1 =
+    type (MAX). Sert à confronter la projection au schéma réel et à repérer les
+    colonnes NVARCHAR(MAX) à lire castées (voir _select_clause).
     """
     from sqlalchemy import text
 
-    query = text("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :t")
-    df = _run_query(query, {"t": table_name}, "la lecture du schéma", table_name)
-    return set(df["COLUMN_NAME"]) if not df.empty else set()
+    query = text("SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH "
+                 "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :t")
+    df = _run_query(query, {"t": table_name}, "la lecture du schéma", table_name, retries=2, retry_wait=10)
+    return {
+        r.COLUMN_NAME: (str(r.DATA_TYPE).lower(),
+                        None if pd.isna(r.CHARACTER_MAXIMUM_LENGTH) else int(r.CHARACTER_MAXIMUM_LENGTH))
+        for r in df.itertuples()
+    }
+
+
+def existing_columns(table_name: str) -> set:
+    """
+    Colonnes réellement présentes dans la table. Permet de ne jamais demander une
+    colonne absente (échec `Invalid column name`) et de signaler immédiatement un
+    écart entre le YAML et le schéma réel, au lieu d'échouer bien plus tard.
+    """
+    return set(column_types(table_name))
+
+
+def long_text_columns(types: dict) -> set:
+    """Colonnes texte de type (MAX) parmi le résultat de column_types()."""
+    return {c for c, (type_sql, longueur) in types.items()
+            if type_sql in ("nvarchar", "varchar", "nchar", "char") and longueur == -1}
 
 
 def load_table(table_name: str, columns: Optional[list] = None, chunk_size: Optional[int] = None,
                 progress=None, dt_cr_col: Optional[str] = None,
-                since: Optional[datetime] = None) -> pd.DataFrame:
+                since: Optional[datetime] = None, cast_text: Optional[set] = None,
+                retries: int = 0, retry_wait: float = 30) -> pd.DataFrame:
     """
     Initial Load. `columns` restreint la projection (défaut : toutes) ;
     `chunk_size` active la lecture par paquets avec progression ; `since` borne
     l'historique rapatrié (`load.initial_since` du YAML) — utile quand la table
-    remonte plusieurs années dont le métier n'a pas besoin.
+    remonte plusieurs années dont le métier n'a pas besoin. `cast_text` : colonnes
+    NVARCHAR(MAX) lues castées ; `retries` : nouvelles tentatives sur coupure réseau.
     """
     from sqlalchemy import text
 
     db = os.getenv("DB_NAME", "DATAWAREHOUSE_SA_PROD")
-    select = _select_clause(columns)
+    select = _select_clause(columns, cast_text)
     params = None
     where = ""
     if since is not None and dt_cr_col:
@@ -151,21 +216,22 @@ def load_table(table_name: str, columns: Optional[list] = None, chunk_size: Opti
         params = {"since": since}
     query = text(f"SELECT {select} FROM [{db}].[dbo].[{table_name}]{where}")
     return _run_query(query, params, "la lecture complète (Initial Load)", table_name,
-                       chunk_size=chunk_size, progress=progress)
+                       chunk_size=chunk_size, progress=progress, retries=retries, retry_wait=retry_wait)
 
 
 def load_table_delta(table_name: str, dt_cr_col: str, since: Optional[datetime],
                       columns: Optional[list] = None, chunk_size: Optional[int] = None,
-                      progress=None) -> pd.DataFrame:
+                      progress=None, cast_text: Optional[set] = None,
+                      retries: int = 0, retry_wait: float = 30) -> pd.DataFrame:
     """
     Charge uniquement les lignes ajoutées depuis `since` (Incremental Load).
     `since=None` -> équivalent à un load_table() complet (aucun filtre).
-    Même projection de colonnes et même lecture par paquets que load_table().
+    Même projection, même lecture par paquets et mêmes tentatives que load_table().
     """
     from sqlalchemy import text
 
     db = os.getenv("DB_NAME", "DATAWAREHOUSE_SA_PROD")
-    select = _select_clause(columns)
+    select = _select_clause(columns, cast_text)
     if since is None:
         query = text(f"SELECT {select} FROM [{db}].[dbo].[{table_name}]")
         params = {}
@@ -173,7 +239,7 @@ def load_table_delta(table_name: str, dt_cr_col: str, since: Optional[datetime],
         query = text(f"SELECT {select} FROM [{db}].[dbo].[{table_name}] WHERE [{dt_cr_col}] > :since")
         params = {"since": since}
     return _run_query(query, params, "la lecture du delta (Incremental Load)", table_name,
-                       chunk_size=chunk_size, progress=progress)
+                       chunk_size=chunk_size, progress=progress, retries=retries, retry_wait=retry_wait)
 
 
 def load_query(query: str) -> pd.DataFrame:

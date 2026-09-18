@@ -18,6 +18,15 @@ load:
   # Borne l'Initial Load à partir de cette date (AAAA-MM-JJ) au lieu de
   # rapatrier tout l'historique. Vide = tout l'historique.
   initial_since:
+  # Colonnes texte NVARCHAR(MAX) lues en NVARCHAR(4000) : le pilote ODBC lit une
+  # colonne (MAX) cellule par cellule. Mesuré sur E10 : 20 000 lignes en 11,6 s
+  # telles quelles, 2,7 s castées. Plus longue valeur réelle relevée sur les 5
+  # tables (17/09/2026) : 149 caractères — aucune troncature. false = lecture brute.
+  cast_max_text: true
+  # Coupure réseau passagère pendant la lecture : nombre de nouvelles tentatives
+  # (lecture reprise depuis le début, attente croissante). 0 = aucune.
+  retries: 2
+  retry_wait_seconds: 30
 
 output:
   format: "csv"
