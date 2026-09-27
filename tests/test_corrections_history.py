@@ -12,7 +12,8 @@ Exigences métier explicites couvertes ici :
 import pytest
 
 from shared.corrections_history import (
-    HISTORY_COLS,
+    SHEET_COLS,
+    load_history,
     append_corrections,
     history_path,
     load_history_df,
@@ -33,7 +34,7 @@ def test_history_is_empty_on_very_first_run(isolated_history):
     """Exigence explicite : au premier run, l'onglet Instructions est vide."""
     df = load_history_df("E11_RDCC")
     assert df.empty
-    assert list(df.columns) == HISTORY_COLS
+    assert list(df.columns) == SHEET_COLS
 
 
 def test_history_accumulates_across_successive_corrections(isolated_history):
@@ -43,7 +44,9 @@ def test_history_accumulates_across_successive_corrections(isolated_history):
     df = load_history_df("E11_RDCC")
     assert len(df) == 2
     assert set(df["Champ"]) == {"Devise", "NomCorrespondant"}
-    assert (df["Date"] != "").all()
+    # La date n'est plus affichée dans le classeur, mais reste tracée dans le JSON.
+    assert list(df.columns) == SHEET_COLS
+    assert all(entry["date"] for entry in load_history("E11_RDCC"))
 
 
 def test_reapplying_identical_correction_does_not_duplicate(isolated_history):

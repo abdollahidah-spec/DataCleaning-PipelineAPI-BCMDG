@@ -274,6 +274,46 @@ def get_max_dtcr(df: pd.DataFrame, dt_cr_col: str) -> Optional[datetime]:
     return parsed.max().floor("us").to_pydatetime()
 
 
+# Encodages de repli pour un CSV qui n'est pas en UTF-8. Un export Excel ou SQL Server
+# sur un poste Windows francophone est très souvent en cp1252 : sans repli, la lecture
+# échouait avec « 'utf-8' codec can't decode byte ... » (constaté le 27/09/2026 sur un
+# extrait E07 de la recette). latin-1 accepte n'importe quel octet : dernier recours.
+_CSV_ENCODAGES_REPLI = ("cp1252", "latin-1")
+# Séparateurs testés si le fichier ne se découpe pas avec celui de la config.
+_CSV_SEPARATEURS_REPLI = (",", "\t", ";")
+
+
+def _lire_csv(p: Path, inp: dict) -> pd.DataFrame:
+    """Lit un CSV en tolérant l'encodage et le séparateur réels du fichier fourni."""
+    encodage = inp.get("encoding", "utf-8-sig")
+    sep = inp.get("sep", ";")
+
+    derniere_erreur = None
+    df = None
+    for rang, enc in enumerate([encodage, *[e for e in _CSV_ENCODAGES_REPLI if e != encodage]]):
+        try:
+            df = pd.read_csv(p, sep=sep, encoding=enc, dtype=str, keep_default_na=False)
+        except UnicodeDecodeError as exc:
+            derniere_erreur = exc
+            continue
+        if rang:
+            print(f"  [AVERTISSEMENT] '{p.name}' n'est pas encodé en {encodage} : lu en {enc}. "
+                  f"Vérifie les accents dans les résultats, ou réexporte le fichier en UTF-8.")
+        break
+    if df is None:
+        raise derniere_erreur
+
+    # Une seule colonne : le séparateur de la config n'est pas celui du fichier.
+    if df.shape[1] == 1:
+        for autre in (s for s in _CSV_SEPARATEURS_REPLI if s != sep):
+            essai = pd.read_csv(p, sep=autre, encoding=enc, dtype=str, keep_default_na=False)
+            if essai.shape[1] > 1:
+                print(f"  [AVERTISSEMENT] '{p.name}' n'utilise pas le séparateur '{sep}' : "
+                      f"lu avec '{autre}' ({essai.shape[1]} colonnes).")
+                return essai
+    return df
+
+
 def load_file(path: str, cfg: dict) -> pd.DataFrame:
     """Charge un fichier CSV ou Excel local (dtype=str pour préserver les valeurs brutes)."""
     p = Path(path)
@@ -287,11 +327,7 @@ def load_file(path: str, cfg: dict) -> pd.DataFrame:
         if p.suffix.lower() in (".xlsx", ".xls"):
             df = pd.read_excel(p, sheet_name=inp.get("sheet", 0), dtype=str, keep_default_na=False)
         elif p.suffix.lower() in (".csv", ".tsv"):
-            df = pd.read_csv(
-                p, sep=inp.get("sep", ";"),
-                encoding=inp.get("encoding", "utf-8-sig"), dtype=str,
-                keep_default_na=False,
-            )
+            df = _lire_csv(p, inp)
         else:
             raise DataSourceError(
                 f"Format de fichier non supporté : '{p.suffix}' (fichier '{path}') — "

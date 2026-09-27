@@ -117,7 +117,8 @@ interne (rapport de qualité) mais ne sont plus affichés dans cette feuille —
 ## Boucle de correction (Instructions)
 
 L'onglet `Instructions` du classeur livré est l'**historique en lecture seule** des corrections
-déjà appliquées (`Date | Champ | Input | Label_Attendu`) : **vide au tout premier run**, puis
+déjà appliquées (`Champ | Input | Label_Attendu`, la date restant tracée dans le JSON mais
+non affichée — demande métier) : **vide au tout premier run**, puis
 enrichi à chaque `apply_corrections`. Ce n'est donc pas une liste pré-remplie de valeurs à
 corriger — celles-ci se lisent dans les feuilles de classification (lignes `OUTLIER`) et dans le
 rapport PDF.

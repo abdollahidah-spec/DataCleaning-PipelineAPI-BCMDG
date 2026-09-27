@@ -260,7 +260,8 @@ prime dès le run suivant, sans jamais retoucher le fichier Excel source.
 **Traçabilité** : chaque correction appliquée est journalisée dans l'historique propre à l'API
 (`{api}/referentiel/corrections_history_{api_id}.json`, un fichier par API, jamais partagé). Cet
 historique est reproduit en **lecture seule** dans l'onglet `Instructions` du classeur produit au
-run suivant (`Date`, `Champ`, `Input`, `Label_Attendu`) : **vide au tout premier run**, puis
+run suivant (`Champ`, `Input`, `Label_Attendu` — la date reste tracée dans le JSON d'historique,
+mais n'est pas affichée) : **vide au tout premier run**, puis
 enrichi au fil des validations métier. Rejouer deux fois la même correction ne crée pas de
 doublon ; corriger différemment une valeur déjà corrigée laisse bien les deux entrées.
 
@@ -334,7 +335,7 @@ Chaque run automatisé produit **un classeur Excel** `E11_RDCC_classification.xl
 |---|---|
 | `NomCorrespondant`, `Devise` | Classification : valeur brute → valeur normalisée (OUTLIER inclus). **Cumulative** — construite depuis le référentiel + le cache warm-start, pas depuis les lignes du run, donc jamais amputée des labels déjà connus en mode incrémental |
 | `Anomalies_Numeriques` | Uniquement les lignes en anomalie (les 4 règles de cohérence) — NumCompte, RefBanque, colonnes numériques/date concernées, `dtCr`, règle violée, détail |
-| `Instructions` | **Historique en lecture seule** des corrections manuelles déjà appliquées via `apply_corrections` (`Date`, `Champ`, `Input`, `Label_Attendu`) — un historique par API, **vide au tout premier run** |
+| `Instructions` | **Historique en lecture seule** des corrections manuelles déjà appliquées via `apply_corrections` (`Champ`, `Input`, `Label_Attendu`) — un historique par API, **vide au tout premier run** |
 
 Pas d'extraction ligne par ligne dans ce classeur (sur demande métier — voir *Extraction ad hoc*
 pour un export complet à la demande). Stocké en local (`e11_rdcc/outputs/`, ou

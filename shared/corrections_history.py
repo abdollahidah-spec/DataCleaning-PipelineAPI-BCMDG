@@ -34,6 +34,11 @@ from pathlib import Path
 import pandas as pd
 
 HISTORY_COLS = ["Date", "Champ", "Input", "Label_Attendu"]
+# Colonnes AFFICHÉES dans l'onglet "Instructions" du classeur : la date reste
+# tracée dans le JSON, mais n'est pas affichée (demande métier — seules les valeurs
+# déjà corrigées intéressent le lecteur). Ce sont aussi exactement les colonnes
+# attendues par apply_corrections.py : le classeur livré peut être complété tel quel.
+SHEET_COLS = ["Champ", "Input", "Label_Attendu"]
 _VERSION = "1.0.0"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -70,14 +75,13 @@ def load_history_df(api_id: str) -> pd.DataFrame:
     seules) si aucune correction n'a encore jamais été appliquée pour cette API."""
     rows = [
         {
-            "Date": entry.get("date", ""),
             "Champ": entry.get("champ", ""),
             "Input": entry.get("input", ""),
             "Label_Attendu": entry.get("label_attendu", ""),
         }
         for entry in load_history(api_id)
     ]
-    return pd.DataFrame(rows, columns=HISTORY_COLS)
+    return pd.DataFrame(rows, columns=SHEET_COLS)
 
 
 def _write(path: Path, corrections: list[dict]) -> None:
