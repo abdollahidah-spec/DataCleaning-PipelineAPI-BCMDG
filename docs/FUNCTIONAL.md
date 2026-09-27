@@ -116,12 +116,25 @@ interne (rapport de qualité) mais ne sont plus affichés dans cette feuille —
 
 ## Boucle de correction (Instructions)
 
-L'onglet `Instructions` du classeur est pré-rempli automatiquement (une ligne par valeur
-outlier distincte, par champ) avec les colonnes `Champ | Input | Label_Attendu`. Une équipe
-métier renseigne `Label_Attendu`, puis `apply_corrections.py` route chaque ligne vers le cache
-warm-start du champ concerné (déduit de `Champ`) — la correction prime dès le run suivant. Les
-champs numériques n'ont pas de cache warm-start (pas de concept de "correction" pour une
-anomalie de cohérence) — les lignes `Champ` les concernant sont ignorées avec un avertissement.
+L'onglet `Instructions` du classeur livré est l'**historique en lecture seule** des corrections
+déjà appliquées (`Date | Champ | Input | Label_Attendu`) : **vide au tout premier run**, puis
+enrichi à chaque `apply_corrections`. Ce n'est donc pas une liste pré-remplie de valeurs à
+corriger — celles-ci se lisent dans les feuilles de classification (lignes `OUTLIER`) et dans le
+rapport PDF.
+
+Pour soumettre des corrections, le métier fournit un classeur Excel comportant un onglet
+`Instructions` avec les colonnes `Champ | Input | Label_Attendu` (une ligne par valeur corrigée) ;
+`apply_corrections.py` route chaque ligne vers le cache warm-start du champ nommé par `Champ`, et
+la correction prime dès le run suivant (méthode `WARM`). Une ligne sans `Label_Attendu` est
+ignorée avec un décompte, un `Champ` inconnu avec un avertissement, et les champs numériques
+(anomalies de cohérence, pas de cache warm-start) de même.
+
+Chaque correction est enregistrée sous plusieurs clés — libellé nettoyé, valeur brute, valeur
+brute en majuscules — parce que les champs ne cherchent pas tous la même forme dans leur cache
+(libellé nettoyé pour Devise/TypeSwift/NomDonneurOrdre, valeur brute en majuscules pour
+NatureEconomique/Pays). Sans cela, une correction dont le nettoyage modifie la valeur (accents,
+ponctuation, tokens numériques retirés) restait sans effet, sans aucun message — constaté sur
+NatureEconomique E10 le 27/09/2026.
 
 ## Extraction ad hoc
 

@@ -64,20 +64,30 @@ def apply_corrections(file_path: str | Path, api_id: str, config_path: str | Pat
 
         corrections: dict = {}
         ignorees = 0
+        appliquees = 0
         for _, row in group.iterrows():
-            clean_in = processor.clean_fn(row.get("Input", ""))
+            brut = str(row.get("Input", "")).strip()
             clean_lbl = _clean_label_attendu(row.get("Label_Attendu", ""))
-            if not clean_in or not clean_lbl:
-                if clean_in or clean_lbl:
+            # Chaque champ cherche sa propre forme dans le cache warm-start : le
+            # libellé nettoyé (Devise, TypeSwift, NomDonneurOrdre...) ou la valeur
+            # brute, parfois en majuscules (NatureEconomique, Pays). On enregistre
+            # donc les trois : sans ça, une correction dont le nettoyage modifie la
+            # valeur (accents, ponctuation, tokens retirés) restait sans effet, sans
+            # le moindre message.
+            cles = {c for c in (processor.clean_fn(brut), brut, brut.upper()) if c}
+            if not cles or not clean_lbl:
+                if cles or clean_lbl:
                     ignorees += 1
                 continue
-            corrections[clean_in] = clean_lbl
+            appliquees += 1
+            for cle in cles:
+                corrections[cle] = clean_lbl
 
         if corrections:
             processor.apply_correction(api_id, corrections)
         applied[champ] = corrections
         suffix = f", {ignorees} ligne(s) ignorée(s) (incomplète)" if ignorees else ""
-        print(f"  [{champ}] {len(corrections)} correction(s) appliquée(s){suffix}")
+        print(f"  [{champ}] {appliquees} correction(s) appliquée(s){suffix}")
 
     # Traçabilité : historique propre à cette API, affiché en LECTURE SEULE dans
     # l'onglet "Instructions" du classeur produit au run suivant (vide tant que
