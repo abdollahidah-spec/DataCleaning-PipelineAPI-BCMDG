@@ -38,6 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_beneficiaire_web_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
@@ -183,29 +184,20 @@ def treating_nomdonneurordre(
         result_map[v] = None
         to_resolve_claude.setdefault(clean, None)
 
-    a_claude   = list(to_resolve_claude.keys())
-    batch_size = cfg.get("llm", {}).get("batch_size", 5)
-    claude_resultats: dict = {}
-    failed_techniquement: set = set()
-    total = len(a_claude)
-    for debut in range(0, total, batch_size):
-        batch_val = a_claude[debut:debut + batch_size]
-        reponses  = call_claude_beneficiaire_web_batch(
-            batch_val, cfg, system_prompt=_SYSTEM_PROMPT_NDO_E10, user_intro=_USER_INTRO
-        )
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch {debut}-{debut+len(batch_val)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for modalite in batch_val:
-                claude_resultats[modalite] = None
-                failed_techniquement.add(modalite)
-            continue
-        for k, modalite in enumerate(batch_val):
-            claude_resultats[modalite] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE] {min(debut + batch_size, total)}/{total} modalités", end="\r")
-    if total and verbose:
-        print()
+    # Lots envoyés en PARALLÈLE (llm.concurrency) : chaque appel déclenche une
+    # recherche web réelle, le temps est de l'attente réseau — voir
+    # shared/claude_batches.py. `llm.max_values_per_run` borne le coût d'un run.
+    a_claude = list(to_resolve_claude.keys())
+    batch_size, concurrency, max_values = llm_options(cfg)
+    claude_resultats, failed_techniquement, reportees = resolve_in_batches(
+        a_claude,
+        lambda lot: call_claude_beneficiaire_web_batch(
+            lot, cfg, system_prompt=_SYSTEM_PROMPT_NDO_E10, user_intro=_USER_INTRO),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE NomDonneurOrdre",
+    )
+    # Valeurs laissées de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     cacheable = {
         modalite: (lbl or "OUTLIER")

@@ -285,6 +285,11 @@ python -m e10_fe.ad_hoc_extraction --config e10_fe/config/E10_FE.yaml \
     --query "SELECT TOP 100 * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E10EtatBcmFluxEntrants]"
 ```
 
+Les réglages de performance d'un chargement (lecture SQL accélérée, reprise sur coupure
+réseau, parallélisme et plafond des appels Claude) et les durées attendues d'un premier
+chargement sont documentés dans
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#performance-dun-chargement-réglages-communs).
+
 Un nouveau fichier horodaté est créé à chaque exécution (sauf si `--output` fixe un nom précis,
 auquel cas ce fichier est écrasé à chaque relance). Seules les requêtes de lecture (`SELECT` /
 `WITH ... SELECT`) sont acceptées — garde-fou contre une requête destructrice collée par erreur.

@@ -36,6 +36,15 @@ llm:
   batch_size:  20
   max_retry:   3
   retry_wait:  2
+  # Nombre de lots Claude envoyés EN PARALLÈLE (shared/claude_batches.py). Le temps
+  # d'un appel est presque entièrement de l'attente réseau (surtout avec recherche
+  # web) : les enchaîner un par un rendait le premier chargement d'E07/E10 très long.
+  # 1 = comportement séquentiel d'origine.
+  concurrency: 4
+  # Plafond de valeurs NOUVELLES envoyées à Claude par run et par champ. Au-delà,
+  # les valeurs restent OUTLIER, ne sont PAS mises en cache et sont reproposées au
+  # run suivant — borne la durée et le coût d'un premier chargement. Vide = aucun plafond.
+  max_values_per_run:
 
 reports:
   # Nombre max de valeurs outliers détaillées PAR CHAMP dans le rapport PDF

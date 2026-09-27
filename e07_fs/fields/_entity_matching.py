@@ -281,9 +281,16 @@ def _dgi_fuzzy_batch(
     if not dgi_clean or not labels:
         return resultats
 
-    for i in range(0, len(labels), batch_size):
+    total_lots = -(-len(labels) // batch_size)
+    for numero, i in enumerate(range(0, len(labels), batch_size), start=1):
         batch  = labels[i:i + batch_size]
         scores = process.cdist(batch, dgi_clean, scorer=fuzz.WRatio, workers=-1)
+        # Étape la plus longue d'un premier chargement (des milliers de libellés
+        # nouveaux contre ~52 000 raisons sociales DGI) : sans trace, elle donne
+        # l'impression que le traitement est bloqué.
+        if numero == total_lots or numero % 10 == 0:
+            print(f"  [DGI] {min(i + batch_size, len(labels))}/{len(labels)} libellés comparés "
+                  f"({numero}/{total_lots} lots)", flush=True)
         k = min(top_k, scores.shape[1])
         for j, lab in enumerate(batch):
             row   = scores[j]

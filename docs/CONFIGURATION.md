@@ -148,6 +148,33 @@ ModeReglement, Devise, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays), t
 - `no_activity.template_na_columns` sans `SourceDevise` (colonne absente de la table).
 - `load.initial_since: 2024-01-01`.
 
+## Performance d'un chargement (réglages communs)
+
+Mesures faites sur la vraie base le 17-18/09/2026, poste de la BCM, pilote ODBC
+« SQL Server » (le seul installé ; « ODBC Driver 18 for SQL Server » serait plus rapide).
+
+| Réglage (`load` / `llm`) | Effet |
+|---|---|
+| `load.cast_max_text` (défaut `true`) | Colonnes texte `NVARCHAR(MAX)` lues via `CAST(... AS NVARCHAR(4000))`. Sans cela, le pilote lit cellule par cellule : 20 000 lignes en 11,6 s contre 2,7 s. Sur E10, le chargement complet passe d'environ 1 h 30 à environ 8 min. Valeur réelle la plus longue relevée : 149 caractères, donc aucune troncature |
+| `load.retries` (défaut 2), `load.retry_wait_seconds` (30) | Nouvelle tentative sur coupure réseau passagère (VPN), lecture reprise depuis le début. Une erreur SQL (colonne inconnue, droits) échoue immédiatement |
+| `llm.concurrency` (défaut 4) | Lots Claude envoyés en parallèle. Le temps d'un appel est de l'attente réseau, surtout avec recherche web. `1` = comportement séquentiel d'origine |
+| `llm.max_values_per_run` (vide = aucun plafond) | Plafond de valeurs NOUVELLES envoyées à Claude par run et par champ. Au-delà : OUTLIER pour ce run, rien en cache, reproposé au run suivant. Utile pour borner la durée et le coût d'un premier chargement |
+
+**Volume Claude d'un premier chargement** (valeurs distinctes depuis 2024, mesuré) :
+
+| Champ | Valeurs distinctes | À résoudre par Claude | Appels |
+|---|---|---|---|
+| E10 `NomDonneurOrdre` | 15 245 | 0 (référentiel + cache + classification locale) | 0 |
+| E10 `NatureEconomique` | 448 | 14 | 1 |
+| E10 `Pays` | 1 081 | 7 | 1 |
+| E07 `Beneficiaire` | 27 754 | 1 771 | 355, **avec recherche web** |
+
+Les 355 appels avec recherche web d'E07 dominent le premier chargement (30 s à 1 min par
+appel) : environ 3 à 6 h en série, ramenées à environ 45 à 90 min avec `llm.concurrency: 4`.
+C'est une dépense unique : les résolutions sont mises en cache et les runs incrémentaux
+suivants n'ont que quelques valeurs nouvelles à traiter. Pour un premier essai rapide,
+mettre `llm.max_values_per_run: 50` sur le champ `Beneficiaire`.
+
 ## Installation
 
 Voir [README.md](../README.md#installation).

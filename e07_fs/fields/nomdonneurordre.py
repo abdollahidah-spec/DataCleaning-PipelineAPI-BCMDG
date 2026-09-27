@@ -51,6 +51,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_dgi_arbitrage_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
@@ -242,26 +243,17 @@ def treating_nomdonneurordre(
             })
         items.append({"label": lab, "candidates": cand_meta})
 
-    arbitrage_batch_size = cfg.get("llm", {}).get("batch_size", 20)
-    arbitrage_resultats: dict = {}
-    failed_techniquement: set = set()
-    total = len(keys)
-    for debut in range(0, total, arbitrage_batch_size):
-        batch_keys  = keys[debut:debut + arbitrage_batch_size]
-        batch_items = items[debut:debut + arbitrage_batch_size]
-        reponses    = call_claude_dgi_arbitrage_batch(batch_items, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch d'arbitrage {debut}-{debut + len(batch_keys)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for lab in batch_keys:
-                failed_techniquement.add(lab)
-            continue
-        for k, lab in enumerate(batch_keys):
-            arbitrage_resultats[lab] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE arbitrage DGI] {min(debut + arbitrage_batch_size, total)}/{total} modalités", end="\r")
-    if total and verbose:
-        print()
+    # Lots d'arbitrage envoyés en PARALLÈLE (llm.concurrency, voir
+    # shared/claude_batches.py) ; `llm.max_values_per_run` borne le coût d'un run.
+    item_par_label = dict(zip(keys, items))
+    batch_size, concurrency, max_values = llm_options(cfg)
+    arbitrage_resultats, failed_techniquement, reportees = resolve_in_batches(
+        keys, lambda lot: call_claude_dgi_arbitrage_batch([item_par_label[lab] for lab in lot], cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE arbitrage DGI",
+    )
+    # Labels laissés de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     for lab in keys:
         if lab in failed_techniquement:

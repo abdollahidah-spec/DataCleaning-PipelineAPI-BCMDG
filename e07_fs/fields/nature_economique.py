@@ -44,6 +44,7 @@ from typing import Optional
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_match_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
@@ -373,22 +374,17 @@ def treating_nature_economique(
             continue
         a_claude.setdefault(clean_map[v], []).append(v)
 
+    # Lots envoyés en parallèle (llm.concurrency) — voir shared/claude_batches.py.
     cles = list(a_claude)
-    batch_size = cfg.get("llm", {}).get("batch_size", 20)
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(liste="\n".join(f"- {l}" for l in ref.all_labels))
-    reponses_claude: dict = {}
-    echecs: set = set()
-    for debut in range(0, len(cles), batch_size):
-        lot = cles[debut:debut + batch_size]
-        reponses = call_claude_match_batch(lot, ref.all_labels, system_prompt, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le lot {debut}-{debut + len(lot)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            echecs.update(lot)
-            continue
-        reponses_claude.update(zip(lot, reponses))
-        if verbose:
-            print(f"  [CLAUDE] {min(debut + batch_size, len(cles))}/{len(cles)} modalités", end="\r")
+    batch_size, concurrency, max_values = llm_options(cfg)
+    reponses_claude, echecs, reportees = resolve_in_batches(
+        cles, lambda lot: call_claude_match_batch(lot, ref.all_labels, system_prompt, cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE NatureEconomique",
+    )
+    # Valeurs laissées de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    echecs.update(reportees)
 
     # Cache indexé sur la valeur BRUTE (même convention que le cache hérité de
     # l'ancien repo) : chaque variante brute d'une même valeur nettoyée est retenue.
