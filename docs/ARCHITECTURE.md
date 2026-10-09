@@ -1,5 +1,14 @@
 # Architecture technique
 
+Documents liés :
+- [ARCHITECTURE_INDUSTRIALISATION.md](ARCHITECTURE_INDUSTRIALISATION.md) — vue de cadrage pour
+  une équipe d'exploitation : les deux volets (par champ / par API), la chaîne d'exécution, les
+  performances mesurées, les limites de l'exploitation actuelle et les prérequis de mise en
+  production.
+- Le README de chaque package d'endpoint détaille ses champs, ses règles, ses livrables, ses
+  réglages et ses coûts : [e07_fs](../e07_fs/README.md), [e08_ocd](../e08_ocd/README.md),
+  [e09_pe](../e09_pe/README.md), [e10_fe](../e10_fe/README.md), [e11_rdcc](../e11_rdcc/README.md).
+
 ## Principe : un run, une API, tous ses champs
 
 `shared/base_api_pipeline.py::BaseApiPipeline` orchestre un run complet pour une API :
