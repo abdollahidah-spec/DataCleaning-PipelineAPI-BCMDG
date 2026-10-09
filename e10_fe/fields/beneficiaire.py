@@ -55,6 +55,9 @@ from pathlib import Path
 import pandas as pd
 
 from shared.claude_batches import llm_options, resolve_in_batches
+from shared.dgi_cache import charger as charger_dgi
+from shared.dgi_cache import empreinte_dgi
+from shared.dgi_cache import enregistrer as enregistrer_dgi
 from shared.claude_client import call_claude_dgi_arbitrage_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
@@ -220,8 +223,17 @@ def treating_beneficiaire(
         to_fuzzy.setdefault(label, None)
 
     # ── Matching DGI sur les libellés uniques restants ──────────────────────────
-    fuzzy_labels = list(to_fuzzy.keys())
-    label_resolution: dict = {}
+    # Les résolutions déterministes déjà calculées lors d'un run précédent (même base
+    # DGI) sont réutilisées : c'est l'étape la plus longue du chargement
+    # (shared/dgi_cache.py). `matching.cache_resolutions: false` la désactive.
+    empreinte = empreinte_dgi(dgi_index)
+    memoire = (charger_dgi(api_id, "Beneficiaire", empreinte)
+               if matching_cfg.get("cache_resolutions", True) else {})
+    label_resolution: dict = {lab: memoire[lab] for lab in to_fuzzy if lab in memoire}
+    if label_resolution:
+        print(f"  [DGI] {len(label_resolution)} libellé(s) déjà rapproché(s) lors d'un run "
+              f"précédent : rapprochement évité.")
+    fuzzy_labels = [lab for lab in to_fuzzy if lab not in label_resolution]
     still_fuzzy: list = []
 
     for lab in fuzzy_labels:
@@ -300,6 +312,11 @@ def treating_beneficiaire(
             pub_short = match_public_entity(clean_label(val), public_index)
             if pub_short is not None:
                 label_resolution[lab] = (pub_short, "PUBLIC_ENT")
+
+    if matching_cfg.get("cache_resolutions", True):
+        enregistres = enregistrer_dgi(api_id, "Beneficiaire", empreinte, {**memoire, **label_resolution})
+        if enregistres and verbose:
+            print(f"  [DGI] {enregistres} résolution(s) déterministe(s) mémorisée(s) pour les prochains runs")
 
     cacheable = {
         lab: label_resolution[lab][0]

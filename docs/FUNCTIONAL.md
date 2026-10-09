@@ -137,6 +137,21 @@ NatureEconomique/Pays). Sans cela, une correction dont le nettoyage modifie la v
 ponctuation, tokens numériques retirés) restait sans effet, sans aucun message — constaté sur
 NatureEconomique E10 le 27/09/2026.
 
+## Valeur déjà conforme au référentiel (`MAP_CIBLE`)
+
+Un référentiel associe un libellé brut à une valeur normalisée. Un libellé qui EST DÉJÀ la
+valeur normalisée n'en est donc pas une clé : sans traitement particulier, il partait en
+résolution payante (Claude) ou coûteuse (rapprochement DGI) et pouvait revenir OUTLIER, puis
+être mis en cache définitivement — cas réel de l'ancien repo : « BRED BANQUE POPULAIRE » sur
+E11_RDCC, 4 363 lignes.
+
+Cette étape (`shared/referentiel_cibles.py`, comparaison insensible à la casse) intervient juste
+après le cache warm-start — une correction manuelle garde donc la priorité — et s'applique à
+tous les champs adossés à un référentiel : NomCorrespondant (E08, E11), NomDonneurOrdre et
+Beneficiaire (E07, E08, E10), Produits (E08).
+
+---
+
 ## Extraction ad hoc
 
 `e11_rdcc/ad_hoc_extraction.py` — outil indépendant du run automatisé, pour un analyste qui veut

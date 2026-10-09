@@ -17,6 +17,15 @@ def _no_external_calls(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_state_dir(tmp_path_factory, monkeypatch):
+    """Aucun test ne doit écrire dans le vrai `state/` du repo : état incrémental et
+    mémoire des rapprochements DGI (shared/dgi_cache.py) partent en dossier
+    temporaire. Autouse : constaté le 09/10/2026 — des tests travaillant sur une base
+    DGI synthétique déposaient des `dgi_resolution_*.json` dans le state/ de la machine."""
+    monkeypatch.setenv("STATE_DIR", str(tmp_path_factory.mktemp("state")))
+
+
+@pytest.fixture(autouse=True)
 def _isolated_corrections_history(tmp_path_factory, monkeypatch):
     """Aucun test ne doit écrire un vrai fichier d'historique de corrections dans
     `{api}/referentiel/` du repo — `apply_corrections()` en écrit un à chaque

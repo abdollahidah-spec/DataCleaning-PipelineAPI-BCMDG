@@ -48,6 +48,7 @@ from babel import Locale
 import geonamescache
 from rapidfuzz import process as rfuzz
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_match_batch
 from shared.field_processor import CategoricalFieldProcessor
 
@@ -471,26 +472,15 @@ def enrich_with_claude(
         return df
 
     system_prompt = _SYSTEM_PROMPT_PAYS_TEMPLATE.format(liste="\n".join(f"- {c}" for c in _ISO2_LIST))
-    batch_size = cfg.get("llm", {}).get("batch_size", 25)
-    resultats: dict[str, Optional[str]] = {}
-    failed_techniquement: set = set()
-    total = len(check_values)
-    for debut in range(0, total, batch_size):
-        batch_val = check_values[debut:debut + batch_size]
-        reponses  = call_claude_match_batch(batch_val, _ISO2_LIST, system_prompt, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch {debut}-{debut+len(batch_val)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for v in batch_val:
-                resultats[v] = None
-                failed_techniquement.add(v)
-            continue
-        for k, v in enumerate(batch_val):
-            resultats[v] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE Pays] {min(debut + batch_size, total)}/{total} valeurs", end="\r")
-    if total and verbose:
-        print()
+    # Lots envoyés en parallèle (llm.concurrency) — voir shared/claude_batches.py.
+    batch_size, concurrency, max_values = llm_options(cfg)
+    resultats, failed_techniquement, reportees = resolve_in_batches(
+        check_values, lambda lot: call_claude_match_batch(lot, _ISO2_LIST, system_prompt, cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE Pays",
+    )
+    # Valeurs laissées de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     cacheable = {
         v: (iso or "OUTLIER")

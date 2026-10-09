@@ -404,3 +404,26 @@ def match_public_entity(label_clean: str, public_index: dict, threshold: float =
             return public_index["full_to_short"][match[0]]
 
     return None
+
+
+def index_valeurs_cibles(ref: dict) -> dict:
+    """
+    Index inverse du référentiel : {valeur cible nettoyée -> valeur cible d'origine}
+    (porté depuis l'ancien repo, cascade MAP_CIBLE).
+
+    Un référentiel ne contient que des paires {libellé brut -> nom légal}. Un
+    libellé qui EST déjà le nom légal n'est donc pas une clé — sans cet index il
+    partait en cascade payante (Claude / DGI) et pouvait revenir OUTLIER, puis
+    être mis en cache définitivement (cas réel : 'BRED BANQUE POPULAIRE' sur
+    E11_RDCC, 4 363 lignes). Une valeur déjà conforme au référentiel est
+    résolue par elle-même, juste après le cache warm-start (les corrections
+    manuelles gardent donc la priorité, cf. apply_corrections.py).
+    """
+    index: dict[str, str] = {}
+    for valeur in ref.values():
+        if not valeur or valeur == "OUTLIER":
+            continue
+        cle = clean_label(valeur)
+        if cle and cle not in index:
+            index[cle] = valeur
+    return index

@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_beneficiaire_web_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
@@ -47,6 +48,7 @@ from e08_ocd.fields._entity_matching import (
     classify_local,
     clean_label,
     est_outlier_evident,
+    index_valeurs_cibles,
     load_public_entities,
     match_public_entity,
     prepare_public_ent_index,
@@ -104,6 +106,7 @@ def treating_beneficiaire(
 
     if ref is None:
         ref = load_referentiel(_REFERENTIEL_DIR / "beneficiaire_referentiel_E08.json")
+    ref_cibles = index_valeurs_cibles(ref)
 
     if public_index is None:
         public_index = prepare_public_ent_index(load_public_entities())
@@ -134,6 +137,10 @@ def treating_beneficiaire(
             result_map[v] = (ws_cache[clean], "WARM")
             continue
 
+        if clean in ref_cibles:
+            result_map[v] = (ref_cibles[clean], "MAP_CIBLE")
+            continue
+
         if clean in ref:
             result_map[v] = (ref[clean], "MAP")
             continue
@@ -160,26 +167,17 @@ def treating_beneficiaire(
         to_resolve_claude.setdefault(clean, None)
 
     a_claude   = list(to_resolve_claude.keys())
-    batch_size = cfg.get("llm", {}).get("batch_size", 5)
-    claude_resultats: dict = {}
-    failed_techniquement: set = set()
-    total = len(a_claude)
-    for debut in range(0, total, batch_size):
-        batch_val = a_claude[debut:debut + batch_size]
-        reponses  = call_claude_beneficiaire_web_batch(batch_val, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch {debut}-{debut+len(batch_val)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for modalite in batch_val:
-                claude_resultats[modalite] = None
-                failed_techniquement.add(modalite)
-            continue
-        for k, modalite in enumerate(batch_val):
-            claude_resultats[modalite] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE] {min(debut + batch_size, total)}/{total} modalités", end="\r")
-    if total and verbose:
-        print()
+    # Lots envoyés en PARALLÈLE (llm.concurrency) : chaque appel déclenche une
+    # recherche web réelle, le temps est de l'attente réseau — voir
+    # shared/claude_batches.py. `llm.max_values_per_run` borne le coût d'un run.
+    batch_size, concurrency, max_values = llm_options(cfg)
+    claude_resultats, failed_techniquement, reportees = resolve_in_batches(
+        a_claude, lambda lot: call_claude_beneficiaire_web_batch(lot, cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE Beneficiaire",
+    )
+    # Valeurs laissées de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     cacheable = {
         modalite: (lbl or "OUTLIER")

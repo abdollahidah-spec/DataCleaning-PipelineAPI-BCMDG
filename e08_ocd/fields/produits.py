@@ -38,9 +38,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_match_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
+from shared.referentiel_cibles import index_valeurs_cibles
 
 _REFERENTIEL_DIR = Path(__file__).parent.parent / "referentiel"
 
@@ -157,6 +159,10 @@ def treating_produits(
         if verbose:
             print(f"  Warm-start Produits {api_id} : {len(ws_cache)} modalités connues")
 
+    # Un libellé brut qui EST DÉJÀ un libellé du référentiel est résolu par lui-même
+    # (MAP_CIBLE) : sinon il partait chez Claude et pouvait revenir OUTLIER.
+    libelles_cibles = index_valeurs_cibles({l: l for l in ref.all_libelles}, clean_produits)
+
     unique_vals = df[produit_col].dropna().unique()
     clean_map   = {v: clean_produits(v) for v in unique_vals}
     df["Produit_clean"] = df[produit_col].map(clean_map).fillna("")
@@ -187,33 +193,26 @@ def treating_produits(
             result_map[v] = (ref.aliases[clean], "MAP")
             continue
 
+        if clean in libelles_cibles:
+            result_map[v] = (libelles_cibles[clean], "MAP_CIBLE")
+            continue
+
         result_map[v] = None
         to_resolve_claude.setdefault(clean, None)
 
     a_claude   = list(to_resolve_claude.keys())
-    batch_size = cfg.get("llm", {}).get("batch_size", 20)
+    # Lots envoyés en parallèle (llm.concurrency) — voir shared/claude_batches.py.
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
         liste="\n".join(f"- {l}" for l in ref.all_libelles)
     )
-    claude_resultats: dict = {}
-    failed_techniquement: set = set()
-    total = len(a_claude)
-    for debut in range(0, total, batch_size):
-        batch_val = a_claude[debut:debut + batch_size]
-        reponses  = call_claude_match_batch(batch_val, ref.all_libelles, system_prompt, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch {debut}-{debut+len(batch_val)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for modalite in batch_val:
-                claude_resultats[modalite] = None
-                failed_techniquement.add(modalite)
-            continue
-        for k, modalite in enumerate(batch_val):
-            claude_resultats[modalite] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE] {min(debut + batch_size, total)}/{total} modalités", end="\r")
-    if total and verbose:
-        print()
+    batch_size, concurrency, max_values = llm_options(cfg)
+    claude_resultats, failed_techniquement, reportees = resolve_in_batches(
+        a_claude, lambda lot: call_claude_match_batch(lot, ref.all_libelles, system_prompt, cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE Produits",
+    )
+    # Valeurs laissées de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     cacheable = {
         modalite: (lbl or "OUTLIER")

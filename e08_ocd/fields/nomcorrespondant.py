@@ -36,7 +36,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
 from shared.claude_client import call_claude_nomcorrespondant_batch
+from shared.referentiel_cibles import index_valeurs_cibles
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
 
@@ -100,6 +102,9 @@ def treating_nomcorrespondant(
 
     if ref is None:
         ref = load_nomcorrespondant_referentiel(_REFERENTIEL_DIR / "nomcorrespondant_referentiel_E08.json")
+    # Un libellé déjà conforme au référentiel est résolu par lui-même (MAP_CIBLE)
+    # — sinon il partait en appel Claude payant et pouvait revenir OUTLIER.
+    ref_cibles = index_valeurs_cibles(ref, clean_nomcorrespondant)
 
     if cfg is None:
         cfg = {}
@@ -133,6 +138,10 @@ def treating_nomcorrespondant(
             if clean in ws_cache:
                 result_map[v] = (ws_cache[clean], "WARM"); continue
 
+        if clean.upper() in ref_cibles:
+            result_map[v] = (ref_cibles[clean.upper()], "MAP_CIBLE")
+            continue
+
         if clean in ref:
             result_map[v] = (ref[clean], "MAP")
             continue
@@ -144,27 +153,16 @@ def treating_nomcorrespondant(
         result_map[v] = None
         to_resolve_claude.setdefault(clean, None)
 
-    a_claude   = list(to_resolve_claude.keys())
-    batch_size = cfg.get("llm", {}).get("batch_size", 20)
-    claude_resultats: dict = {}
-    failed_techniquement: set = set()
-    total = len(a_claude)
-    for debut in range(0, total, batch_size):
-        batch_val = a_claude[debut:debut + batch_size]
-        reponses  = call_claude_nomcorrespondant_batch(batch_val, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch {debut}-{debut+len(batch_val)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for modalite in batch_val:
-                claude_resultats[modalite] = None
-                failed_techniquement.add(modalite)
-            continue
-        for k, modalite in enumerate(batch_val):
-            claude_resultats[modalite] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE] {min(debut + batch_size, total)}/{total} modalités", end="\r")
-    if total and verbose:
-        print()
+    # Lots envoyés en parallèle (llm.concurrency) — voir shared/claude_batches.py.
+    a_claude = list(to_resolve_claude.keys())
+    batch_size, concurrency, max_values = llm_options(cfg)
+    claude_resultats, failed_techniquement, reportees = resolve_in_batches(
+        a_claude, lambda lot: call_claude_nomcorrespondant_batch(lot, cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE NomCorrespondant",
+    )
+    # Valeurs laissées de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     cacheable = {
         modalite: (lbl or "OUTLIER")

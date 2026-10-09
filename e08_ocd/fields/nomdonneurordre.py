@@ -50,6 +50,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from shared.claude_batches import llm_options, resolve_in_batches
+from shared.dgi_cache import charger as charger_dgi
+from shared.dgi_cache import empreinte_dgi
+from shared.dgi_cache import enregistrer as enregistrer_dgi
 from shared.claude_client import call_claude_dgi_arbitrage_batch
 from shared.field_processor import CategoricalFieldProcessor
 from shared.na_rule import apply_na_rule_frame
@@ -59,6 +63,7 @@ from e08_ocd.fields._entity_matching import (
     clean_label,
     est_outlier_evident,
     hyper_normaliser,
+    index_valeurs_cibles,
     load_dgi_base,
     load_public_entities,
     match_public_entity,
@@ -123,6 +128,7 @@ def treating_nomdonneurordre(
 
     if ref is None:
         ref = load_referentiel(_REFERENTIEL_DIR / "nomdonneurordre_referentiel_E08.json")
+    ref_cibles = index_valeurs_cibles(ref)
 
     if dgi_index is None:
         dgi_index = prepare_dgi_index(load_dgi_base())
@@ -164,6 +170,9 @@ def treating_nomdonneurordre(
         if warm_start and label in ws_cache:
             result_by_pair[key] = (ws_cache[label], "WARM"); continue
 
+        if label in ref_cibles:
+            result_by_pair[key] = (ref_cibles[label], "MAP_CIBLE"); continue
+
         if label in ref:
             result_by_pair[key] = (ref[label], "MAP"); continue
 
@@ -188,8 +197,17 @@ def treating_nomdonneurordre(
         to_fuzzy.setdefault(label, None)
 
     # ── Matching DGI sur les libellés uniques restants ──────────────────────────
-    fuzzy_labels = list(to_fuzzy.keys())
-    label_resolution: dict = {}
+    # Les résolutions déterministes déjà calculées lors d'un run précédent (même base
+    # DGI) sont réutilisées : c'est l'étape la plus longue du chargement
+    # (shared/dgi_cache.py). `matching.cache_resolutions: false` la désactive.
+    empreinte = empreinte_dgi(dgi_index)
+    memoire = (charger_dgi(api_id, "NomDonneurOrdre", empreinte)
+               if matching_cfg.get("cache_resolutions", True) else {})
+    label_resolution: dict = {lab: memoire[lab] for lab in to_fuzzy if lab in memoire}
+    if label_resolution:
+        print(f"  [DGI] {len(label_resolution)} libellé(s) déjà rapproché(s) lors d'un run "
+              f"précédent : rapprochement évité.")
+    fuzzy_labels = [lab for lab in to_fuzzy if lab not in label_resolution]
     still_fuzzy: list = []
 
     for lab in fuzzy_labels:
@@ -232,26 +250,17 @@ def treating_nomdonneurordre(
             })
         items.append({"label": lab, "candidates": cand_meta})
 
-    arbitrage_batch_size = cfg.get("llm", {}).get("batch_size", 20)
-    arbitrage_resultats: dict = {}
-    failed_techniquement: set = set()
-    total = len(keys)
-    for debut in range(0, total, arbitrage_batch_size):
-        batch_keys  = keys[debut:debut + arbitrage_batch_size]
-        batch_items = items[debut:debut + arbitrage_batch_size]
-        reponses    = call_claude_dgi_arbitrage_batch(batch_items, cfg)
-        if reponses is None:
-            print(f"  [CLAUDE] échec technique sur le batch d'arbitrage {debut}-{debut + len(batch_keys)} "
-                  f"-> OUTLIER temporaire (non mis en cache, réessayé au prochain run)")
-            for lab in batch_keys:
-                failed_techniquement.add(lab)
-            continue
-        for k, lab in enumerate(batch_keys):
-            arbitrage_resultats[lab] = reponses[k]
-        if verbose:
-            print(f"  [CLAUDE arbitrage DGI] {min(debut + arbitrage_batch_size, total)}/{total} modalités", end="\r")
-    if total and verbose:
-        print()
+    # Lots d'arbitrage envoyés en PARALLÈLE (llm.concurrency, voir
+    # shared/claude_batches.py) ; `llm.max_values_per_run` borne le coût d'un run.
+    item_par_label = dict(zip(keys, items))
+    batch_size, concurrency, max_values = llm_options(cfg)
+    arbitrage_resultats, failed_techniquement, reportees = resolve_in_batches(
+        keys, lambda lot: call_claude_dgi_arbitrage_batch([item_par_label[lab] for lab in lot], cfg),
+        batch_size=batch_size, concurrency=concurrency, max_values=max_values,
+        libelle="CLAUDE arbitrage DGI",
+    )
+    # Labels laissés de côté par le plafond : OUTLIER pour ce run, jamais en cache.
+    failed_techniquement.update(reportees)
 
     for lab in keys:
         if lab in failed_techniquement:
@@ -277,6 +286,11 @@ def treating_nomdonneurordre(
             pub_short = match_public_entity(clean_label(val), public_index)
             if pub_short is not None:
                 label_resolution[lab] = (pub_short, "PUBLIC_ENT")
+
+    if matching_cfg.get("cache_resolutions", True):
+        enregistres = enregistrer_dgi(api_id, "NomDonneurOrdre", empreinte, {**memoire, **label_resolution})
+        if enregistres and verbose:
+            print(f"  [DGI] {enregistres} résolution(s) déterministe(s) mémorisée(s) pour les prochains runs")
 
     cacheable = {
         lab: label_resolution[lab][0]

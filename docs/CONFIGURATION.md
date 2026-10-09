@@ -159,6 +159,8 @@ Mesures faites sur la vraie base le 17-18/09/2026, poste de la BCM, pilote ODBC
 | `load.retries` (défaut 2), `load.retry_wait_seconds` (30) | Nouvelle tentative sur coupure réseau passagère (VPN), lecture reprise depuis le début. Une erreur SQL (colonne inconnue, droits) échoue immédiatement |
 | `llm.concurrency` (défaut 4) | Lots Claude envoyés en parallèle. Le temps d'un appel est de l'attente réseau, surtout avec recherche web. `1` = comportement séquentiel d'origine |
 | `llm.max_values_per_run` (vide = aucun plafond) | Plafond de valeurs NOUVELLES envoyées à Claude par run et par champ. Au-delà : OUTLIER pour ce run, rien en cache, reproposé au run suivant. Utile pour borner la durée et le coût d'un premier chargement |
+| `llm.concurrency` s'applique à TOUS les champs à fallback Claude des 5 APIs (NomCorrespondant, Produits, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays) | — |
+| `matching.cache_resolutions` (défaut `true`, champs à rapprochement DGI) | Mémorise les résolutions DÉTERMINISTES du rapprochement DGI (`DGI_EXACT_NORM`, `DGI_FUZZY_STRONG`, `DGI_NO_MATCH`) dans `{STATE_DIR}/dgi_resolution_{api}_{champ}.json`, avec une empreinte de la base DGI : un run suivant ne refait pas les ~25 min de rapprochement. Base DGI modifiée → empreinte différente → tout est recalculé. Les arbitrages Claude restent dans le cache warm-start du champ |
 
 **Volume Claude d'un premier chargement** (valeurs distinctes depuis 2024, mesuré) :
 
