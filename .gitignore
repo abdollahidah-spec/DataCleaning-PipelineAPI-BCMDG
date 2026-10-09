@@ -32,3 +32,6 @@ Thumbs.db
 BCM_DataCleaning_Task.xml
 e07_fs/outputs/
 e10_fe/outputs/
+
+# PDF régénérables depuis les markdown du repo (scripts/doc_pdf.py) — non versionnés
+**/*.pdf
