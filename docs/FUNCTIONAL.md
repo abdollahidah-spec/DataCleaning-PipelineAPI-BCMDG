@@ -1,4 +1,12 @@
-# Documentation fonctionnelle — E11_RDCC
+# Documentation fonctionnelle
+
+Règles métier appliquées par la chaîne par API, endpoint par endpoint : E11_RDCC ci-dessous,
+puis [E09_PE](#e09_pe-bcmdg-223), [E08_OCD](#e08_ocd-ouvertures-de-crédits-documentaires),
+[E07_FS](#e07_fs-flux-sortants) et [E10_FE](#e10_fe-flux-entrants). Les mécanismes communs à
+tous les endpoints — règle NA, étape `MAP_CIBLE`, boucle de correction — sont décrits une seule
+fois, dans leur section propre.
+
+# E11_RDCC — relevés des comptes correspondants
 
 ## Champs catégoriels
 
@@ -114,6 +122,8 @@ impossibles à distinguer. `NomCorrespondant`, `Devise`, `Delta`, `Severity` res
 interne (rapport de qualité) mais ne sont plus affichés dans cette feuille — voir
 `e11_rdcc/fields/numeric_coherence.py::SHEET_COLUMNS` pour ajuster.
 
+# Mécanismes communs à tous les endpoints
+
 ## Boucle de correction (Instructions)
 
 L'onglet `Instructions` du classeur livré est l'**historique en lecture seule** des corrections
@@ -165,7 +175,7 @@ disponible pour E11, E07 et E10 (`e07_fs/`, `e10_fe/ad_hoc_extraction.py`) — p
 
 ---
 
-## E09_PE (BCMDG-223)
+# E09_PE (BCMDG-223)
 
 Même approche qu'E11, en plus simple — voir [e09_pe/](../e09_pe/) et le tableau dans
 [README.md](../README.md#champs-traités--e09_pe).
@@ -201,7 +211,30 @@ des lignes échouent `DATE_VALIDITY` (échéance le jour même ou antérieure à
 valider par le métier lors du test : signal de qualité de données réel à investiguer, ou situation
 normale (ex: échéances arrivées à terme avant mise à jour du statut) ?
 
-## E07_FS (Flux Sortants)
+# E08_OCD (Ouvertures de crédits documentaires)
+
+6 champs catégoriels, aucun champ de contrôle numérique. Tous partagent le même témoin NA
+(`ref_transaction: "NumCredoc"`), appliqué indépendamment champ par champ : E08 ne documente
+aucun gabarit « sans activité » multi-champs, le correctif de NA globale d'E11 n'a donc pas lieu
+d'être ici.
+
+| Champ | Cascade | Méthodes |
+|---|---|---|
+| `Devise` | identique à E11, purement déterministe | `WARM`, `MAP`, `NUM`, `ALIAS`, `NOISE`, `STRIP`, `OUTLIER` |
+| `NomCorrespondant` | référentiel BCM, puis Claude pour l'identification d'une banque à code SWIFT/BIC publié | `WARM`, `MAP_CIBLE`, `MAP`, `CLAUDE`, `OUTLIER` |
+| `Produits` | référentiel construit depuis le fichier métier, puis Claude en liste fermée | `WARM`, `MAP_CIBLE`, `NOISE`, `CLAUDE`, `OUTLIER` |
+| `NomDonneurOrdre` | donneur d'ordre local : NIF exact, puis rapprochement sur la base fiscale DGI, arbitrage Claude si plusieurs candidats sont proches | `WARM`, `MAP_CIBLE`, `NIF_EXACT`, `PUBLIC_ENT`, `DGI_EXACT_NORM`, `DGI_FUZZY_STRONG`, `DGI_CLAUDE_ARBITRAGE`, `DGI_NO_MATCH`, `OUTLIER` |
+| `Beneficiaire` | bénéficiaire étranger : entreprises publiques, puis Claude avec recherche web | `WARM`, `MAP_CIBLE`, `PUBLIC_ENT`, `CLAUDE`, `OUTLIER` |
+| `Pays` | référentiel construit en code (pycountry / babel / geonamescache), mots-clés d'adresse, rapprochement approché, puis Claude | `WARM`, `NFKC`, `ADDR`, `FUZZY`, `CLAUDE`, `OUTLIER` |
+
+`Produits` n'existe que sur E08, et seulement dans la chaîne par API : il n'a pas de module dans
+le dépôt par champ.
+
+Le référentiel `Produits` se reconstruit depuis le fichier métier avec
+`e08_ocd/build_produits_referentiel.py` ; celui de `NomDonneurOrdre` et de `Beneficiaire` avec
+`e08_ocd/build_referentiel.py`.
+
+# E07_FS (Flux Sortants)
 
 ### Champs catégoriels
 
@@ -227,7 +260,7 @@ seulement contrôlé par le gabarit « sans activité », comme `SourceDevise`.
 Pour E07 comme pour E10, l'historique traité est limité aux lignes créées depuis le
 01/01/2024 (`dtCr >= 2024-01-01`).
 
-## E10_FE (Flux Entrants)
+# E10_FE (Flux Entrants)
 
 Mêmes règles qu'E07 (champs catégoriels, règle NA témoin `ReferenceTransaction`, 4 règles de
 validation des transactions), avec les données FE/E10 de l'ancien repo. Sur un flux entrant, les

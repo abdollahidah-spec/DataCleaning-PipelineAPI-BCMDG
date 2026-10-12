@@ -16,6 +16,30 @@ Copier `.env.example` vers `.env` et renseigner :
 | `EMAIL_MAX_ATTACHMENT_MB` | Taille max de la pièce jointe email avant omission (défaut 15) |
 | `LOG_LEVEL` | Niveau de log (défaut `INFO`) |
 
+## `shared/config_base.yaml` — socle commun
+
+Toutes les APIs héritent de ce fichier ; un `config/{API}.yaml` ne redéfinit que ce qui change
+(fusion profonde, voir `shared/config.py::load_config`).
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `pipeline_version` | `1.0.0` | version reportée dans les rapports et l'email |
+| `input.type` | `sqlserver` | source : `sqlserver`, ou un fichier local (`csv`, `excel`) |
+| `input.sep`, `input.encoding`, `input.sheet` | `;`, `utf-8-sig`, `0` | lecture d'un fichier local. L'encodage et le séparateur déclarés sont essayés d'abord, puis des replis (`cp1252`, `latin-1` ; `,`, tabulation) — un CSV exporté depuis Excel en français reste lisible |
+| `load.chunk_size` | `50000` | lecture par paquets, pour une progression visible dans les logs pendant un chargement long. `0` ou vide = lecture en un seul bloc |
+| `load.initial_since` | vide | borne le chargement initial à partir de cette date (AAAA-MM-JJ). Renseigné à `2024-01-01` sur E07 et E10 |
+| `load.cast_max_text` | `true` | voir [Performance d'un chargement](#performance-dun-chargement-réglages-communs) |
+| `load.retries`, `load.retry_wait_seconds` | `2`, `30` | reprise sur coupure réseau passagère |
+| `output.format` | `csv` | format de l'extraction ad hoc |
+| `llm.model` | `claude-sonnet-5` | modèle appelé pour les champs à résolution assistée |
+| `llm.batch_size` | `20` | nombre de valeurs par appel ; surchargé par champ (`35` pour les champs à recherche web) |
+| `llm.max_retry`, `llm.retry_wait` | `3`, `2` | nouvelles tentatives sur un appel en échec, et attente entre deux |
+| `llm.concurrency` | `4` | lots envoyés en parallèle |
+| `llm.max_values_per_run` | vide | plafond de valeurs nouvelles par exécution et par champ |
+| `reports.top_n_outliers_detail` | `100` | valeurs détaillées par champ dans le rapport PDF. `0` = aucune limite |
+| `reports.max_anomaly_rows_excel` | `200000` | lignes d'anomalies écrites dans un onglet Excel ; au-delà, l'onglet garde cet extrait et le détail intégral part dans un CSV à côté du classeur. `0` = aucune limite |
+| `email.enabled`, `email.attach_workbook_max_mb` | `true`, `15` | notification et taille max du classeur joint |
+
 ## `e11_rdcc/config/E11_RDCC.yaml`
 
 Fusionné en profondeur avec `shared/config_base.yaml` (le YAML spécifique surcharge uniquement

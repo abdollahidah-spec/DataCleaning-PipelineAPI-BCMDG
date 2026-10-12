@@ -36,7 +36,7 @@ validées. Elles diffèrent par l'unité de lancement et par la forme des livrab
 
 ## 2. Périmètre : champs et APIs
 
-**8 champs** traités, sur les **5 APIs de déclaration**, soit **22 couples champ/API** :
+**9 champs** traités, sur les **5 APIs de déclaration**, soit **23 couples champ/API** :
 
 | Champ | E07 | E08 | E09 | E10 | E11 |
 |---|---|---|---|---|---|
@@ -49,6 +49,8 @@ validées. Elles diffèrent par l'unité de lancement et par la forme des livrab
 | TypeSwift | oui | — | — | oui | — |
 | ModeReglement | oui | — | — | oui | — |
 | Produits | — | oui | — | — | — |
+
+`Produits` n'est traité que par la chaîne par API. La chaîne par champ en couvre donc 8, soit 22 couples.
 
 **APIs de déclaration et tables alimentées :**
 
