@@ -55,6 +55,9 @@ _CSS = """
   td { font-size: 8pt; padding: 1.4mm 1.8mm; border: 0.4pt solid #cccccc;
        vertical-align: top; }
   code { font-family: Courier, monospace; font-size: 8.5pt; }
+  /* Un identifiant long (nom de table, chemin) ne doit pas déborder de sa
+     colonne : coupure autorisée à l'intérieur du mot, dans les cellules. */
+  td code { -pdf-word-wrap: CJK; font-size: 7.5pt; }
   pre { font-family: Courier, monospace; font-size: 7.5pt; background-color: #f5f5f5;
         border: 0.4pt solid #cccccc; padding: 2mm; margin: 2.5mm 0 3.5mm 0;
         page-break-inside: avoid; }
@@ -62,6 +65,59 @@ _CSS = """
   .saut { page-break-before: always; }
   #pied_de_page { font-size: 7.5pt; color: #666666; text-align: center; }
 """
+
+
+def _tableaux_markdown(texte: str) -> list:
+    """Lignes de chaque tableau markdown du document, dans l'ordre."""
+    tableaux, courant = [], []
+    for ligne in texte.splitlines():
+        if ligne.lstrip().startswith("|"):
+            courant.append(ligne.strip())
+        elif courant:
+            tableaux.append(courant)
+            courant = []
+    if courant:
+        tableaux.append(courant)
+    return tableaux
+
+
+def _largeurs(table: list) -> list:
+    """Largeurs de colonnes en pourcentage, proportionnelles au contenu réel.
+
+    Sans largeurs explicites, le moteur de rendu répartit mal l'espace : une colonne
+    d'intitulés courts se retrouve étranglée, son texte passe à la ligne mot par mot
+    et chevauche la colonne voisine. Les largeurs sont donc calculées ici, à partir
+    de la longueur des cellules, puis bornées pour qu'aucune colonne ne devienne
+    illisible.
+    """
+    lignes = [l.strip().strip("|").split("|") for l in table if "---" not in l]
+    if not lignes:
+        return []
+    nb = max(len(l) for l in lignes)
+    poids = []
+    for i in range(nb):
+        longueurs = [len(l[i].strip()) for l in lignes if len(l) > i]
+        # Longueur représentative : la plus grande, atténuée par la moyenne, pour
+        # qu'une seule cellule très longue ne confisque pas toute la largeur.
+        maxi, moyenne = max(longueurs, default=1), sum(longueurs) / max(len(longueurs), 1)
+        poids.append(max(1.0, (maxi + 2 * moyenne) / 3))
+    total = sum(poids)
+    pourcents = [max(9.0, 100 * p / total) for p in poids]
+    facteur = 100 / sum(pourcents)
+    return [round(p * facteur, 1) for p in pourcents]
+
+
+def _largeurs_de_colonnes(html: str, texte_markdown: str) -> str:
+    """Insère un `<colgroup>` calculé dans chaque tableau du HTML rendu."""
+    specs = [_largeurs(t) for t in _tableaux_markdown(texte_markdown)]
+    morceaux = html.split('<table repeat="1">')
+    rendu = morceaux[0]
+    for i, morceau in enumerate(morceaux[1:]):
+        largeurs = specs[i] if i < len(specs) else []
+        colgroup = ("<colgroup>" + "".join(f'<col width="{l}%" />' for l in largeurs) + "</colgroup>"
+                    if largeurs else "")
+        rendu += '<table repeat="1">' + colgroup + morceau
+    return rendu
 
 
 def markdown_vers_pdf(source: Path, sortie: Path | None = None) -> Path:
@@ -79,6 +135,7 @@ def markdown_vers_pdf(source: Path, sortie: Path | None = None) -> Path:
     # d'en-tête. Sans cet attribut, la suite du tableau apparaît sans ses intitulés de
     # colonnes, et devient illisible.
     corps = corps.replace("<table>", '<table repeat="1">')
+    corps = _largeurs_de_colonnes(corps, texte)
     pied = ('<div id="pied_de_page">page <pdf:pagenumber> / <pdf:pagecount></div>')
     html = (f"<html><head><meta charset='utf-8'><style>{_CSS}</style></head>"
             f"<body>{pied}{corps}</body></html>")

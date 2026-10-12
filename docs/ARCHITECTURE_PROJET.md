@@ -1,15 +1,17 @@
-# Nettoyage et normalisation des données des Banques primaires — architecture
-
-Nature du projet, architecture, fonctionnement et contenu des deux chaînes de traitement.
-
----
+# Nettoyage et normalisation des données des Banques primaires
 
 ## 1. Objet
 
-Les banques primaires remontent au datawarehouse de la BCM des états réglementaires dont les
-champs sont saisis librement par leurs opérateurs : une même devise, un même pays ou une même
-raison sociale y apparaissent sous des dizaines d'orthographes, avec des abréviations, des
-fautes, du bruit de saisie et des valeurs hors sujet.
+Les banques primaires déclarent quotidiennement leurs opérations à la BCM à travers un ensemble
+d'**APIs de déclaration**, une par type d'état réglementaire : flux sortants, flux entrants,
+ouvertures de crédits documentaires, prévisions d'échéances, relevés des comptes correspondants.
+Chaque API alimente sa propre table dans la **base de collecte** de la BCM. C'est cette base,
+et non un entrepôt de données consolidé, qui constitue la source du traitement.
+
+Les champs de ces déclarations sont saisis librement par les opérateurs des banques : une même
+devise, un même pays ou une même raison sociale y apparaissent sous des dizaines d'orthographes,
+avec des abréviations, des fautes, du bruit de saisie et des valeurs hors sujet. En l'état, ces
+données ne sont exploitables ni pour la restitution, ni pour les traitements en aval.
 
 Le traitement produit, pour chaque champ, une **mapping table** : la liste des **valeurs uniques
 rencontrées** dans les données, chacune associée à sa **valeur propre** telle que résolue par le
@@ -34,7 +36,7 @@ validées. Elles diffèrent par l'unité de lancement et par la forme des livrab
 
 ## 2. Périmètre : champs et APIs
 
-**8 champs** traités, sur **5 endpoints**, soit **22 couples champ/API** :
+**8 champs** traités, sur les **5 APIs de déclaration**, soit **22 couples champ/API** :
 
 | Champ | E07 — FS | E08 — OCD | E09 — PE | E10 — FE | E11 — RDCC |
 |---|---|---|---|---|---|
@@ -48,9 +50,9 @@ validées. Elles diffèrent par l'unité de lancement et par la forme des livrab
 | ModeReglement | oui | — | — | oui | — |
 | Produits | — | oui | — | — | — |
 
-**Endpoints et tables source :**
+**APIs de déclaration et tables alimentées :**
 
-| Endpoint | Objet | Table | Volumétrie |
+| API de déclaration | Objet | Table | Volumétrie |
 |---|---|---|---|
 | E07 — FS | flux sortants | `E7EtatBcmFluxSortants` | ≈ 1,0 M lignes |
 | E08 — OCD | ouvertures de crédits documentaires | `E8EtatBcmOuvertureCreditDocumentaires` | ≈ 13 k lignes |
