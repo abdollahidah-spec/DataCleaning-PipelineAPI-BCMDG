@@ -52,13 +52,13 @@ validées. Elles diffèrent par l'unité de lancement et par la forme des livrab
 
 **APIs de déclaration et tables alimentées :**
 
-| API de déclaration | Objet | Table | Volumétrie |
+| API de déclaration | Objet | Table | Volumétrie (lignes) |
 |---|---|---|---|
-| E07 — FS | flux sortants | `E7EtatBcmFluxSortants` | ≈ 1,0 M lignes |
-| E08 — OCD | ouvertures de crédits documentaires | `E8EtatBcmOuvertureCreditDocumentaires` | ≈ 13 k lignes |
-| E09 — PE | prévisions d'échéances | `E9EtatBcmPrevisionEcheances` | ≈ 5,1 M lignes |
-| E10 — FE | flux entrants | `E10EtatBcmFluxEntrants` | ≈ 3,0 M lignes |
-| E11 — RDCC | relevés des comptes correspondants | `E11EtatBcmReleveDesComptesCorrespondants` | ≈ 350 k lignes |
+| E07 — FS | flux sortants | `E7EtatBcmFluxSortants` | env. 1,0 M |
+| E08 — OCD | ouvertures de crédits documentaires | `E8EtatBcmOuvertureCreditDocumentaires` | env. 13 k |
+| E09 — PE | prévisions d'échéances | `E9EtatBcmPrevisionEcheances` | env. 5,1 M |
+| E10 — FE | flux entrants | `E10EtatBcmFluxEntrants` | env. 3,0 M |
+| E11 — RDCC | relevés des comptes correspondants | `E11EtatBcmReleveDesComptesCorrespondants` | env. 350 k |
 
 Les tables sont lues en lecture seule stricte : aucune écriture, aucun DDL.
 

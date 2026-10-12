@@ -35,3 +35,7 @@ e10_fe/outputs/
 
 # PDF régénérables depuis les markdown du repo (scripts/doc_pdf.py) — non versionnés
 **/*.pdf
+
+# Fontes Latin Modern du générateur de PDF : téléchargées et converties à la
+# demande par scripts/polices_latex.py — régénérables, non versionnées
+assets/fonts/
