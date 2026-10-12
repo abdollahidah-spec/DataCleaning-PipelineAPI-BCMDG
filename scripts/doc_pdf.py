@@ -81,42 +81,94 @@ def _tableaux_markdown(texte: str) -> list:
     return tableaux
 
 
-def _largeurs(table: list) -> list:
-    """Largeurs de colonnes en pourcentage, proportionnelles au contenu réel.
+def _largeur_texte_pt(texte: str, gras: bool = False, fixe: bool = False) -> float:
+    """Largeur approchée d'un texte, en points, pour la police du document."""
+    par_caractere = 4.7 if fixe else (5.1 if gras else 4.3)
+    large = sum(1 for c in texte if ord(c) > 0x2000)      # tirets longs, guillemets typographiques
+    return (len(texte) - large) * par_caractere + large * 8.0
 
-    Sans largeurs explicites, le moteur de rendu répartit mal l'espace : une colonne
-    d'intitulés courts se retrouve étranglée, son texte passe à la ligne mot par mot
-    et chevauche la colonne voisine. Les largeurs sont donc calculées ici, à partir
-    de la longueur des cellules, puis bornées pour qu'aucune colonne ne devienne
-    illisible.
+
+def _largeurs(table: list) -> list:
+    """Largeurs de colonnes, en pourcentages ENTIERS dont la somme fait 100.
+
+    Trois contraintes, dans cet ordre :
+
+    1. l'intitulé d'une colonne courte doit tenir sur une ligne, et aucune cellule
+       ne doit contenir un mot plus large que sa colonne — le moteur coupe aux
+       espaces, pas à l'intérieur d'un mot, et ne rogne pas ce qui dépasse : le
+       texte se dessinerait par-dessus la colonne voisine ;
+    2. l'espace restant est réparti au prorata du volume de texte ;
+    3. aucune colonne ne dépasse 2,5 fois son minimum, pour qu'une colonne de
+       libellés longs n'écrase pas les autres.
+
+    Les pourcentages sont entiers : les valeurs décimales sont ignorées par le
+    moteur, qui retombe alors sur une répartition par défaut.
     """
     lignes = [l.strip().strip("|").split("|") for l in table if "---" not in l]
     if not lignes:
         return []
     nb = max(len(l) for l in lignes)
-    poids = []
+    UTILE_PT, MARGE_PT = 499.0, 16.0
+
+    minimums, poids = [], []
     for i in range(nb):
-        longueurs = [len(l[i].strip()) for l in lignes if len(l) > i]
-        # Longueur représentative : la plus grande, atténuée par la moyenne, pour
-        # qu'une seule cellule très longue ne confisque pas toute la largeur.
-        maxi, moyenne = max(longueurs, default=1), sum(longueurs) / max(len(longueurs), 1)
+        cellules = [l[i].strip() for l in lignes if len(l) > i]
+        entete = cellules[0] if cellules else ""
+        besoin = _largeur_texte_pt(entete, gras=True) if len(entete) <= 16 else 0.0
+        for rang, cellule in enumerate(cellules):
+            fixe = cellule.count("`") >= 2
+            propre = cellule.replace("`", "").replace("*", "")
+            for mot in propre.split():
+                besoin = max(besoin, _largeur_texte_pt(mot, gras=(rang == 0), fixe=fixe))
+        longueurs = [len(c) for c in cellules] or [1]
+        maxi, moyenne = max(longueurs), sum(longueurs) / len(longueurs)
+        minimums.append(100 * (besoin + MARGE_PT) / UTILE_PT)
         poids.append(max(1.0, (maxi + 2 * moyenne) / 3))
-    total = sum(poids)
-    pourcents = [max(9.0, 100 * p / total) for p in poids]
-    facteur = 100 / sum(pourcents)
-    return [round(p * facteur, 1) for p in pourcents]
+
+    total_min = sum(minimums)
+    if total_min >= 100:
+        largeurs = [100 * m / total_min for m in minimums]
+    else:
+        reste, total_poids = 100 - total_min, sum(poids)
+        largeurs = [m + reste * p / total_poids for m, p in zip(minimums, poids)]
+        plafonds = [2.5 * m for m in minimums]
+        rendu = sum(max(0.0, l - pl) for l, pl in zip(largeurs, plafonds))
+        if rendu > 0:                                   # redistribue ce qui dépasse le plafond
+            largeurs = [min(l, pl) for l, pl in zip(largeurs, plafonds)]
+            marge = [pl - l for l, pl in zip(largeurs, plafonds)]
+            total_marge = sum(marge) or 1.0
+            largeurs = [l + rendu * m / total_marge for l, m in zip(largeurs, marge)]
+
+    entiers = [max(6, int(round(l))) for l in largeurs]
+    entiers[-1] += 100 - sum(entiers)
+    return entiers
 
 
 def _largeurs_de_colonnes(html: str, texte_markdown: str) -> str:
-    """Insère un `<colgroup>` calculé dans chaque tableau du HTML rendu."""
+    """Applique les largeurs calculées aux cellules d'en-tête de chaque tableau.
+
+    Les largeurs doivent être portées par les cellules d'en-tête : un `<colgroup>`
+    est ignoré par le moteur de rendu, qui retombe alors sur une répartition par
+    défaut — la première colonne est étranglée et son texte se dessine par-dessus
+    la colonne voisine.
+    """
+    import re
+
     specs = [_largeurs(t) for t in _tableaux_markdown(texte_markdown)]
     morceaux = html.split('<table repeat="1">')
     rendu = morceaux[0]
     for i, morceau in enumerate(morceaux[1:]):
-        largeurs = specs[i] if i < len(specs) else []
-        colgroup = ("<colgroup>" + "".join(f'<col width="{l}%" />' for l in largeurs) + "</colgroup>"
-                    if largeurs else "")
-        rendu += '<table repeat="1">' + colgroup + morceau
+        largeurs = list(specs[i]) if i < len(specs) else []
+
+        def poser_largeur(correspondance, largeurs=largeurs):
+            return f'<th width="{largeurs.pop(0)}%">' if largeurs else correspondance.group(0)
+
+        # Seules les cellules de la ligne d'en-tête portent la largeur.
+        entete_fin = morceau.find("</thead>")
+        if entete_fin != -1 and largeurs:
+            entete = re.sub(r"<th>", poser_largeur, morceau[:entete_fin])
+            morceau = entete + morceau[entete_fin:]
+        rendu += '<table repeat="1">' + morceau
     return rendu
 
 

@@ -38,7 +38,7 @@ validées. Elles diffèrent par l'unité de lancement et par la forme des livrab
 
 **8 champs** traités, sur les **5 APIs de déclaration**, soit **22 couples champ/API** :
 
-| Champ | E07 — FS | E08 — OCD | E09 — PE | E10 — FE | E11 — RDCC |
+| Champ | E07 | E08 | E09 | E10 | E11 |
 |---|---|---|---|---|---|
 | Devise | oui | oui | oui | oui | oui |
 | Pays | oui | oui | — | oui | — |
