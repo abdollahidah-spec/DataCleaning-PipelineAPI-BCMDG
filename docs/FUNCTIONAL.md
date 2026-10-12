@@ -1,275 +1,101 @@
-# Documentation fonctionnelle
+# Règles métier
 
-Règles métier appliquées par la chaîne par API, endpoint par endpoint : E11_RDCC ci-dessous,
-puis [E09_PE](#e09_pe-bcmdg-223), [E08_OCD](#e08_ocd-ouvertures-de-crédits-documentaires),
-[E07_FS](#e07_fs-flux-sortants) et [E10_FE](#e10_fe-flux-entrants). Les mécanismes communs à
-tous les endpoints — règle NA, étape `MAP_CIBLE`, boucle de correction — sont décrits une seule
-fois, dans leur section propre.
+Règles communes à tous les endpoints, et lectures retenues là où l'énoncé d'origine était
+ambigu. Le détail des champs, des cascades et des contrôles propres à un endpoint figure dans le
+README de son package : [e07_fs](../e07_fs/README.md), [e08_ocd](../e08_ocd/README.md),
+[e09_pe](../e09_pe/README.md), [e10_fe](../e10_fe/README.md), [e11_rdcc](../e11_rdcc/README.md).
 
-# E11_RDCC — relevés des comptes correspondants
+## Règle NA
 
-## Champs catégoriels
+Une valeur `NA` n'est légitime que si la ligne est bien une déclaration sans activité. Le témoin
+de non-activité est déclaré par champ (`columns.ref_transaction`) :
 
-### NomCorrespondant
-Cascade : cache warm-start (résolutions Claude déjà validées) → référentiel BCM exact →
-fallback API Claude (identification d'une vraie banque avec un vrai code SWIFT/BIC publié,
-sinon `OUTLIER`). Voir `e11_rdcc/fields/nomcorrespondant.py`.
-
-### Devise
-Cascade purement déterministe (pas de LLM) : liste de bruit connu → code ISO 4217 exact →
-code numérique → alias → nettoyage de repli (description entre parenthèses, caractères non
-alphanumériques, préfixe 3 lettres). Voir `e11_rdcc/fields/devise.py`.
-
-### Règle NA (commune aux deux champs) — GLOBALE, corrigée sur demande du Business Analyst
 ```
-Champ == 'NA'  ET  Ref == 'NA'   -> 'NA'
-Champ == 'NA'  ET  Ref != 'NA'   -> OUTLIER
-Champ vide / null / non identifié -> OUTLIER
+champ == 'NA'  ET  témoin == 'NA'   -> 'NA'
+champ == 'NA'  ET  témoin != 'NA'   -> OUTLIER
+champ vide, nul, ou non identifié   -> OUTLIER
 ```
-Pour E11, `Ref` = **`_E11_GlobalNoActivite`**, une colonne synthétique précalculée UNE SEULE FOIS
-pour NomCorrespondant ET Devise ensemble (voir `e11_rdcc/global_na.py` et
-`E11Pipeline.preprocess()`) — corrige un bug où NomCorrespondant et Devise décidaient chacun
-indépendamment en ne regardant que `NumCompte`, sans vérifier l'autre champ ni les 4 montants.
-`_E11_GlobalNoActivite` vaut `'NA'` seulement si TOUT le gabarit du ticket est respecté à la fois
-(`NomCorrespondant`, `Devise`, `NumCompte` tous `'NA'` ET les 4 montants tous à 0), sinon `''`.
 
----
+La règle est appliquée en dernier, après la cascade, et vectorisée (`shared/na_rule.py`). Elle
+n'est jamais redéfinie dans un package : un test de cohérence le vérifie.
 
-## Cohérence numérique (SoldesRDCC)
+Deux particularités :
 
-Les 5 champs `SoldeDebutJournee`, `TotalMvtsDebiteursJournee`, `TotalMvtsCrediteurs`,
-`SoldeFinJournee`, `DateFinJournee` ne sont pas des catégories à normaliser — ce sont des
-valeurs continues soumises à des règles de cohérence métier. Voir
-`e11_rdcc/fields/numeric_coherence.py`.
-
-### Règle 1 — ARITHMETIC
-```
-SoldeFinJournee == SoldeDebutJournee + TotalMvtsCrediteurs - TotalMvtsDebiteursJournee
-```
-(tolérance configurable, `tolerance.absolute`, défaut 0.01). Un champ non numérique/manquant
-est lui-même une anomalie.
-
-### Règle 2 — TEMPORAL_CONTINUITY
-```
-SoldeFinJournee(jour J) == SoldeDebutJournee(jour J+1)
-```
-pour le même compte, regroupé par `grouping_key_temporal_continuity` — CONFIRMÉ par le Business
-Analyst (test métier) : `[RefBanque, NomCorrespondant, NumCompte, Devise]`. Toujours configurable
-en YAML si besoin de le revalider ultérieurement.
-Les lignes "sans activité" (voir règle 3) sont exclues du chaînage — leurs champs identifiants
-sont tous `NA`, elles ne désignent aucun compte précis.
-
-Deux lignes à la même date pour un même compte → anomalie `ERROR` (ambiguïté, impossible de
-choisir laquelle chaîner). Un écart de plus d'un jour entre deux relevés consécutifs → `WARNING`
-(informationnel, pas nécessairement une erreur).
-
-### Règle 3 — NO_ACTIVITY_CONFORMITY
-Modélise le gabarit "pas d'activité" donné par le ticket :
-```json
-{"banque":"string","nomCorrespondant":"NA","numCompte":"NA","devise":"NA",
- "soldeDebutJournee":0,"totalMvtsDebiteursJournee":0,"totalMvtsCrediteurs":0,
- "soldeFinJournee":0,"dateFinJournee":"2024-04-11"}
-```
-- Aucun champ identifiant (`NomCorrespondant`, `Devise`, `NumCompte`) à `NA` → ligne normale,
-  pas de vérification.
-- **Certains** à `NA` mais pas tous → anomalie ("NA partielle").
-- **Tous** à `NA` → ligne "sans activité" légitime ; anomalie **seulement** si un des 4 champs
-  numériques n'est pas exactement 0 (tolérance flottante 1e-9, pas la tolérance métier — c'est
-  une vérification de gabarit, pas une réconciliation).
-
-Une ligne peut échouer à la fois la règle 1 et la règle 3 (ex : taguée "sans activité" mais
-avec un solde non nul) — les deux anomalies sont rapportées indépendamment, jamais l'une
-masquée par l'autre.
-
-### Règle 4 — DATE_VALIDITY
-`DateFinJournee` doit être une date valide, et `DateFinJournee <= dtCr` (date de création/
-ingestion de la ligne en base). Le ticket écrivait littéralement `soldeFinJournee < dtCr`
-(comparaison nombre/date incohérente) — confirmé par le métier comme une coquille pour
-`dateFinJournee <= dtCr`.
-
----
-
-## Livrables
-
-Voir le tableau dans [README.md](../README.md#outputs). Deux fichiers par run (mode non-`file`) :
-
-1. **Classeur Excel** (`E11_RDCC_classification.xlsx`) — toujours envoyé, feuilles de
-   classification par champ + `Anomalies_Numeriques` + `Instructions`. Chemin stable SharePoint,
-   écrasé à chaque run.
-2. **`Rapport_Qualite_Outliers_E11_RDCC_{yyyymmdd}.pdf`** — UN SEUL fichier PDF, deux sections
-   (saut de page entre les deux, `E11Pipeline.build_reports_markdown()`) :
-   - *Rapport de qualité* : statistiques générales + indicateurs de performance de CE run
-     (`shared/report_templates.py::build_quality_report_markdown`, générique, gabarit texte
-     validé par le Business Analyst).
-   - *Rapport des outliers* : répartition par champ traité (7 lignes fixes : `nomCorrespondant`,
-     `devise`, `soldeDebutJournee`, `totalMvtsDebiteursJournee`, `totalMvtsCrediteurs`,
-     `soldeFinJournee`, `dateFinJournee`) et par RefBanque (`e11_rdcc/reports.py`, mapping propre
-     à E11 passé à `shared/report_templates.py::build_outliers_report_markdown`). Le mapping des
-     4 règles numériques vers ces 7 champs est un choix documenté dans le module (chaque règle
-     n'est rattachée qu'à un seul champ candidat) — à valider avec le métier si besoin d'ajustement.
-
-Les deux pièces jointes accompagnent l'email OK (voir [README.md](../README.md) pour le gabarit
-exact du corps). Le rapport de qualité au format tableau n'est plus écrit comme feuille du
-classeur — il reste disponible dans les logs structurés et dans le PDF ci-dessus.
-
-**Colonnes de la feuille `Anomalies_Numeriques`** (demande métier) : `NumCompte`, `RefBanque`,
-les 5 colonnes numériques/date (`SoldeDebutJournee`, `TotalMvtsDebiteursJournee`,
-`TotalMvtsCrediteurs`, `SoldeFinJournee`, `DateFinJournee`), `dtCr` (ajouté sur demande du
-Business Analyst pour faciliter le test du contrôle de continuité temporelle), `Rule`, `Detail`.
-`Rule`/`Detail` sont conservés au-delà de la demande stricte — sans eux, une ligne en échec sur
-deux règles différentes produirait deux lignes visuellement identiques dans le fichier,
-impossibles à distinguer. `NomCorrespondant`, `Devise`, `Delta`, `Severity` restent calculés en
-interne (rapport de qualité) mais ne sont plus affichés dans cette feuille — voir
-`e11_rdcc/fields/numeric_coherence.py::SHEET_COLUMNS` pour ajuster.
-
-# Mécanismes communs à tous les endpoints
-
-## Boucle de correction (Instructions)
-
-L'onglet `Instructions` du classeur livré est l'**historique en lecture seule** des corrections
-déjà appliquées (`Champ | Input | Label_Attendu`, la date restant tracée dans le JSON mais
-non affichée — demande métier) : **vide au tout premier run**, puis
-enrichi à chaque `apply_corrections`. Ce n'est donc pas une liste pré-remplie de valeurs à
-corriger — celles-ci se lisent dans les feuilles de classification (lignes `OUTLIER`) et dans le
-rapport PDF.
-
-Pour soumettre des corrections, le métier fournit un classeur Excel comportant un onglet
-`Instructions` avec les colonnes `Champ | Input | Label_Attendu` (une ligne par valeur corrigée) ;
-`apply_corrections.py` route chaque ligne vers le cache warm-start du champ nommé par `Champ`, et
-la correction prime dès le run suivant (méthode `WARM`). Une ligne sans `Label_Attendu` est
-ignorée avec un décompte, un `Champ` inconnu avec un avertissement, et les champs numériques
-(anomalies de cohérence, pas de cache warm-start) de même.
-
-Chaque correction est enregistrée sous plusieurs clés — libellé nettoyé, valeur brute, valeur
-brute en majuscules — parce que les champs ne cherchent pas tous la même forme dans leur cache
-(libellé nettoyé pour Devise/TypeSwift/NomDonneurOrdre, valeur brute en majuscules pour
-NatureEconomique/Pays). Sans cela, une correction dont le nettoyage modifie la valeur (accents,
-ponctuation, tokens numériques retirés) restait sans effet, sans aucun message — constaté sur
-NatureEconomique E10 le 27/09/2026.
+- **E11** — le témoin ne peut pas être une seule colonne. Une non-activité légitime se vérifie
+  sur tout le gabarit à la fois : `NomCorrespondant`, `Devise` et `NumCompte` tous à `NA` **et**
+  les quatre montants à zéro. Le témoin est donc une colonne synthétique précalculée une fois
+  pour tous les champs (`e11_rdcc/global_na.py`). Un témoin partiel laissait deux champs décider
+  indépendamment et se contredire.
+- **Pays** — `NA` est le code ISO de la Namibie. Une déclaration sans activité porte donc la
+  valeur `NoAs` pour ce champ, et non `NA`.
 
 ## Valeur déjà conforme au référentiel (`MAP_CIBLE`)
 
-Un référentiel associe un libellé brut à une valeur normalisée. Un libellé qui EST DÉJÀ la
-valeur normalisée n'en est donc pas une clé : sans traitement particulier, il partait en
-résolution payante (Claude) ou coûteuse (rapprochement DGI) et pouvait revenir OUTLIER, puis
-être mis en cache définitivement — cas réel de l'ancien repo : « BRED BANQUE POPULAIRE » sur
-E11_RDCC, 4 363 lignes.
+Un référentiel associe un libellé brut à une valeur normalisée. Un libellé qui **est déjà** la
+valeur normalisée n'en est donc pas une clé : sans traitement particulier il partait en
+résolution payante ou en rapprochement fiscal, pouvait revenir `OUTLIER`, puis être mémorisé
+comme tel.
 
-Cette étape (`shared/referentiel_cibles.py`, comparaison insensible à la casse) intervient juste
-après le cache warm-start — une correction manuelle garde donc la priorité — et s'applique à
-tous les champs adossés à un référentiel : NomCorrespondant (E08, E11), NomDonneurOrdre et
-Beneficiaire (E07, E08, E10), Produits (E08).
+L'étape compare la valeur, insensible à la casse, à l'ensemble des valeurs cibles du référentiel
+(`shared/referentiel_cibles.py`). Elle intervient juste après la mémoire des valeurs validées —
+une correction métier garde donc la priorité — et s'applique à tous les champs adossés à un
+référentiel de libellés : `NomCorrespondant`, `NomDonneurOrdre`, `Beneficiaire`, `Produits`.
 
----
+## Boucle de correction
 
-## Extraction ad hoc
+L'onglet `Instructions` du classeur livré porte l'**historique en lecture seule** des corrections
+déjà appliquées, en trois colonnes — `Champ | Input | Label_Attendu`. Il est vide à la première
+exécution. Ce n'est pas une liste de valeurs à corriger : celles-ci se lisent dans les feuilles de
+classification, lignes `OUTLIER`, et dans le rapport d'outliers.
 
-`e11_rdcc/ad_hoc_extraction.py` — outil indépendant du run automatisé, pour un analyste qui veut
-sa propre extraction (requête SQL personnalisée, table, ou fichier local). Applique le nettoyage
-normal à tout champ configuré dont la colonne source est présente dans le résultat ; les champs
-dont une colonne manque sont ignorés silencieusement (pas d'erreur — une requête personnalisée
-peut légitimement ne couvrir que certains champs). Écrit une extraction locale (colonnes de la
-requête + leurs versions nettoyées insérées juste après), sans toucher SharePoint/email/état
-incrémental. Voir [README.md](../README.md#extraction-ad-hoc-requête-sql-personnalisée). (Outil
-disponible pour E11, E07 et E10 (`e07_fs/`, `e10_fe/ad_hoc_extraction.py`) — pas encore porté pour E09/E08.)
+Pour soumettre des corrections, le métier fournit un classeur comportant un onglet `Instructions`
+aux mêmes trois colonnes, une ligne par valeur corrigée. `{api}/apply_corrections.py` route chaque
+ligne vers la mémoire des valeurs validées du champ nommé, et la correction prime dès l'exécution
+suivante, avec la méthode `WARM`. Une ligne sans `Label_Attendu` est ignorée avec un décompte, un
+champ inconnu signalé par un avertissement, un champ de contrôle numérique écarté — il n'a pas de
+mémoire de valeurs validées.
 
----
+Chaque correction est enregistrée sous trois formes de clé : libellé nettoyé, valeur brute, valeur
+brute en majuscules. Les champs ne cherchent pas tous la même forme dans leur mémoire — libellé
+nettoyé pour `Devise`, `TypeSwift` et `NomDonneurOrdre`, valeur brute en majuscules pour
+`NatureEconomique` et `Pays`. Sans cela, une correction dont le nettoyage modifie la valeur
+restait sans effet et sans message.
 
-# E09_PE (BCMDG-223)
+## Contrôles numériques et de date
 
-Même approche qu'E11, en plus simple — voir [e09_pe/](../e09_pe/) et le tableau dans
-[README.md](../README.md#champs-traités--e09_pe).
+Trois endpoints portent des champs qui ne se normalisent pas et produisent un rapport d'anomalies
+au lieu d'une mapping table. Une ligne en échec sur plusieurs règles produit une anomalie par
+règle : aucune n'est masquée par une autre.
 
-### Devise
-Cascade identique à celle d'E11 (référentiel ISO 4217, pas de LLM) — voir `e09_pe/fields/devise.py`.
-Cache warm-start propre à E09 (`validated_classif_devise_e09_pe.json`), indépendant de celui d'E11.
+| Endpoint | Champs contrôlés | Règles | Détail |
+|---|---|---|---|
+| E11 | soldes et dates de relevé | 4, dont un chaînage J / J+1 entre lignes | [e11_rdcc/README.md](../e11_rdcc/README.md) |
+| E09 | montant et date d'échéance | 2, ligne à ligne | [e09_pe/README.md](../e09_pe/README.md) |
+| E07, E10 | montant, taux de change, date de transaction, conformité des messages sans activité | 4, ligne à ligne | [e07_fs/README.md](../e07_fs/README.md) |
 
-### Règle NA (Devise)
-Témoin simple `NumCredoc` (`Devise == 'NA' ET NumCredoc == 'NA' -> 'NA'`, sinon `OUTLIER`) — pas
-de correctif "NA globale" comme pour E11, car E09 n'a qu'un seul champ catégoriel : pas de risque
-que deux champs se contredisent sur un témoin partiel (le problème que corrigeait `global_na.py`
-pour E11 n'existe pas ici).
+## Lectures retenues
 
-### Echeances (MontantEcheance, DateEcheance) — 2 règles, ligne à ligne
-Contrairement aux 4 règles d'E11 (dont une cohérence J/J+1 entre lignes), le ticket BCMDG-223 ne
-demande que 2 contrôles indépendants, sans mémoire entre lignes — voir `e09_pe/fields/echeances.py` :
+Points où l'énoncé d'origine était ambigu ou incohérent, et la règle effectivement implémentée.
 
-- **AMOUNT_POSITIVE** : `MontantEcheance > 0`. Valeur non numérique ou manquante = anomalie.
-- **DATE_VALIDITY** : `DateEcheance` parsable ET strictement postérieure à `dtCr` (comparaison au
-  jour calendaire — `DateEcheance` est toujours minuit dans les données réelles, `dtCr` porte une
-  heure de création précise ; les deux étant naturellement alignés sur le jour, aucune troncature
-  supplémentaire n'était nécessaire, vérifié contre un échantillon réel de 5000 lignes). C'est le
-  sens INVERSE de la règle 4 d'E11 (`<=`) : ici une échéance prévisionnelle doit être future, pas
-  antérieure ou égale à la date de création — pas une coquille du ticket, le sens métier est
-  cohérent tel quel.
+| Point | Règle retenue |
+|---|---|
+| E11, validité de la date de relevé | L'énoncé comparait un solde à une date (`soldeFinJournee < dtCr`). La règle implémentée est `DateFinJournee <= dtCr`, comparaison au jour calendaire |
+| E09, sens de la validité de date | `DateEcheance` doit être **postérieure** à `dtCr` : une échéance prévisionnelle est à venir. C'est le sens inverse de la règle E11, et il est cohérent tel quel |
+| E11, chaînage temporel | Regroupement `[RefBanque, NomCorrespondant, NumCompte, Devise]`. Deux relevés à la même date pour un même compte : anomalie bloquante, le chaînage étant ambigu. Écart de plus d'un jour : avertissement |
+| Base fiscale, entreprises en cessation | Aucun filtre sur la situation : une entreprise en cessation reste rapprochable comme une entreprise active |
+| Champ `Pays` | Résolu par appel au modèle de langage, et les résolutions sont mémorisées — l'appel étant facturé à l'usage |
+| E07 et E10, profondeur d'historique | Le chargement initial est borné aux lignes créées depuis le 01/01/2024 |
+| E07 et E10, champ `Produit` | Hors périmètre de normalisation : seulement contrôlé par le gabarit des messages sans activité |
 
-`NumCredoc` n'est pas normalisé — conservé comme identifiant dans `Anomalies_Echeances`, comme
-`NumCompte` pour E11.
+## Points ouverts
 
-**Observation sur données réelles** (échantillon de 5000 lignes récentes, 2026-08-18) : ~11,7 %
-des lignes échouent `DATE_VALIDITY` (échéance le jour même ou antérieure à la création) — à faire
-valider par le métier lors du test : signal de qualité de données réel à investiguer, ou situation
-normale (ex: échéances arrivées à terme avant mise à jour du statut) ?
-
-# E08_OCD (Ouvertures de crédits documentaires)
-
-6 champs catégoriels, aucun champ de contrôle numérique. Tous partagent le même témoin NA
-(`ref_transaction: "NumCredoc"`), appliqué indépendamment champ par champ : E08 ne documente
-aucun gabarit « sans activité » multi-champs, le correctif de NA globale d'E11 n'a donc pas lieu
-d'être ici.
-
-| Champ | Cascade | Méthodes |
-|---|---|---|
-| `Devise` | identique à E11, purement déterministe | `WARM`, `MAP`, `NUM`, `ALIAS`, `NOISE`, `STRIP`, `OUTLIER` |
-| `NomCorrespondant` | référentiel BCM, puis Claude pour l'identification d'une banque à code SWIFT/BIC publié | `WARM`, `MAP_CIBLE`, `MAP`, `CLAUDE`, `OUTLIER` |
-| `Produits` | référentiel construit depuis le fichier métier, puis Claude en liste fermée | `WARM`, `MAP_CIBLE`, `NOISE`, `CLAUDE`, `OUTLIER` |
-| `NomDonneurOrdre` | donneur d'ordre local : NIF exact, puis rapprochement sur la base fiscale DGI, arbitrage Claude si plusieurs candidats sont proches | `WARM`, `MAP_CIBLE`, `NIF_EXACT`, `PUBLIC_ENT`, `DGI_EXACT_NORM`, `DGI_FUZZY_STRONG`, `DGI_CLAUDE_ARBITRAGE`, `DGI_NO_MATCH`, `OUTLIER` |
-| `Beneficiaire` | bénéficiaire étranger : entreprises publiques, puis Claude avec recherche web | `WARM`, `MAP_CIBLE`, `PUBLIC_ENT`, `CLAUDE`, `OUTLIER` |
-| `Pays` | référentiel construit en code (pycountry / babel / geonamescache), mots-clés d'adresse, rapprochement approché, puis Claude | `WARM`, `NFKC`, `ADDR`, `FUZZY`, `CLAUDE`, `OUTLIER` |
-
-`Produits` n'existe que sur E08, et seulement dans la chaîne par API : il n'a pas de module dans
-le dépôt par champ.
-
-Le référentiel `Produits` se reconstruit depuis le fichier métier avec
-`e08_ocd/build_produits_referentiel.py` ; celui de `NomDonneurOrdre` et de `Beneficiaire` avec
-`e08_ocd/build_referentiel.py`.
-
-# E07_FS (Flux Sortants)
-
-### Champs catégoriels
-
-TypeSwift, ModeReglement, Devise, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays —
-même principe que les autres APIs : référentiel + cache warm-start, puis Claude (liste fermée)
-pour les valeurs nouvelles quand le champ le prévoit. Règle NA par champ, témoin
-`ReferenceTransaction` : un `NA` n'est légitime que si la référence vaut aussi `NA`. Pays garde
-sa règle NoAs spécifique (« NA » est le code ISO de la Namibie).
-
-### Transactions — 4 règles
-
-| Règle | Contrôle | Champ du rapport |
-|---|---|---|
-| `AMOUNT_NON_NEGATIVE` | `MontantTransaction` numérique et ≥ 0 | montantTransaction |
-| `RATE_NON_NEGATIVE` | `TauxDeChange` numérique et ≥ 0 | tauxDeChange |
-| `DATE_VALIDITY` | `DateTransaction` parsable et strictement antérieure à `dtCr`, comparaison au jour (option `date_inclusive`) | dateTransaction |
-| `NO_ACTIVITY_CONFORMITY` | Message sans activité (`ReferenceTransaction` = `NA`) : champs texte à `NA`, `Pays` = `NoAs`, montant et taux = 0 | referenceTransaction |
-
-Une ligne en échec sur plusieurs règles produit une ligne d'anomalie par règle (onglet
-`Anomalies_Transactions`). `Produit` est hors périmètre pour l'instant : non normalisé, il est
-seulement contrôlé par le gabarit « sans activité », comme `SourceDevise`.
-
-Pour E07 comme pour E10, l'historique traité est limité aux lignes créées depuis le
-01/01/2024 (`dtCr >= 2024-01-01`).
-
-# E10_FE (Flux Entrants)
-
-Mêmes règles qu'E07 (champs catégoriels, règle NA témoin `ReferenceTransaction`, 4 règles de
-validation des transactions), avec les données FE/E10 de l'ancien repo. Sur un flux entrant, les
-rôles des entités s'inversent :
-
-- **NomDonneurOrdre** — émetteur étranger : référentiel E10, puis Claude + recherche web.
-- **Beneficiaire** — entité locale : NIF exact et matching sur la base fiscale DGI, arbitrage
-  Claude si plusieurs candidats sont proches.
-
-La table ne contient pas `SourceDevise` : cette colonne n'est donc pas contrôlée dans le gabarit
-« sans activité ». Un `TauxDeChange` NULL (≈ 1 % des lignes) est signalé par
-`RATE_NON_NEGATIVE` (valeur non numérique).
+- **E09, taux d'échec sur la validité de date** : sur un échantillon récent, environ 11,7 % des
+  lignes portent une échéance au jour même ou antérieure à la création. À qualifier avec le
+  métier — défaut de qualité réel, ou situation normale d'échéances arrivées à terme avant mise à
+  jour du statut.
+- **E11, rattachement des anomalies aux champs du rapport** : chaque règle numérique est rattachée
+  à un seul champ candidat. Le rattachement est documenté dans
+  `e11_rdcc/fields/numeric_coherence.py` et reste à confirmer.
+- **E11, tolérance de la règle arithmétique** (`tolerance.absolute`) : valeur de travail, non
+  arrêtée par le métier.
+- **Extraction ad hoc** : disponible pour E07, E10 et E11, non portée pour E08 et E09.

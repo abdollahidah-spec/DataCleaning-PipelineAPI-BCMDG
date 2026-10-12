@@ -1,19 +1,26 @@
 # Architecture technique
 
-Documents liés :
-- [ARCHITECTURE_PROJET.md](ARCHITECTURE_PROJET.md) — description de l'existant destinée à une
-  équipe technique : les deux volets (par champ / par API), le périmètre, la nature des mapping
-  tables, le déroulé d'une exécution, les données et leur persistance, les dépendances et les
-  limites connues.
-- [FUNCTIONAL.md](FUNCTIONAL.md) — règles métier, champ par champ et API par API.
-- [CONFIGURATION.md](CONFIGURATION.md) — variables d'environnement et clés des YAML.
-- Le README de chaque package d'endpoint détaille ses champs, ses règles, ses livrables, ses
-  réglages et ses coûts : [e07_fs](../e07_fs/README.md), [e08_ocd](../e08_ocd/README.md),
-  [e09_pe](../e09_pe/README.md), [e10_fe](../e10_fe/README.md), [e11_rdcc](../e11_rdcc/README.md).
+Repère de code, pour qui doit modifier la chaîne par API : où se trouve quoi, quel contrat
+respecter, où brancher un ajout. Le principe, le fonctionnement et le périmètre sont décrits dans
+[ARCHITECTURE_PROJET.md](ARCHITECTURE_PROJET.md) ; les règles et les livrables de chaque endpoint,
+dans le README de son package.
 
-## Principe : une exécution, une API, tous ses champs
+## Organisation
 
-`shared/base_api_pipeline.py::BaseApiPipeline` orchestre une exécution complète pour une API :
+```
+shared/        socle générique
+e0X_xxx/       un package par endpoint
+```
+
+Un package d'endpoint ne réutilise que `shared/`. Un champ porté par plusieurs endpoints est donc
+une copie dans chaque package, et non un module commun : la contrepartie est la dérive possible
+entre copies, que `tests/test_coherence_packages.py` surveille — présence de l'étape `MAP_CIBLE`,
+envoi des lots Claude en parallèle, identité des copies (arbre syntaxique comparé, commentaires
+exclus), et absence de redéfinition locale de la règle `NA`.
+
+## Orchestrateur
+
+`shared/base_api_pipeline.py::BaseApiPipeline.run()` enchaîne :
 
 ```
 load_data()  ->  preprocess()  ->  process_fields()  ->  compute_quality()
@@ -21,136 +28,67 @@ load_data()  ->  preprocess()  ->  process_fields()  ->  compute_quality()
     -> _generate_pdf_reports()  ->  upload_output()  ->  persist_state()  ->  notify()
 ```
 
-`preprocess()` est un point d'extension : par défaut il ne fait rien, E11 s'en sert pour
-précalculer la colonne de non-activité globale (voir `e11_rdcc/global_na.py`).
+`build_extraction_frame()` n'est plus appelée par `run()` — plus d'extraction ligne par ligne dans
+l'exécution automatisée. Elle reste utilisée telle quelle par `{api}/ad_hoc_extraction.py`,
+disponible pour E07, E10 et E11.
 
-`build_extraction_frame()` existe toujours mais n'est plus appelée par `run()` (plus
-d'extraction ligne par ligne dans l'exécution automatisée, sur demande métier) — elle est
-réutilisée telle quelle par l'outil ad hoc `{api}/ad_hoc_extraction.py` pour les extractions sur
-mesure, disponible pour E07, E10 et E11 ; pas encore porté pour E08 et E09.
+## Points d'extension
 
-Chaque champ de l'API est un `FieldProcessor` (`shared/field_processor.py`), configuré depuis la
-section `fields:` du YAML de l'API. Le type déclaré sélectionne la famille de traitement, le nom
-sélectionne le module du package ; un type ou un nom inconnu échoue explicitement, au démarrage
-(`shared/config_validate.py`).
+Un pipeline d'endpoint hérite de `BaseApiPipeline` et ne surcharge que ceci :
 
-| Type déclaré | Implémentation | Sortie | Endpoints |
-|---|---|---|---|
-| `categorical` | `shared/field_processor.py::CategoricalFieldProcessor`, spécialisé par `{api}/fields/{champ}.py` | mapping table brut → normalisé, `OUTLIER` inclus, et stats d'outliers par RefBanque | les 5, soit 23 couples champ/API |
-| `numeric_coherence` | `e11_rdcc/fields/numeric_coherence.py` | rapport d'anomalies, avec chaînage temporel J / J+1 | E11 |
-| `numeric_validation` | `e09_pe/fields/echeances.py` | rapport d'anomalies, règle par règle | E09 |
-| `transaction_validation` | `e07_fs/fields/transactions.py`, `e10_fe/fields/transactions.py` | rapport d'anomalies, règle par règle | E07, E10 |
+| Méthode | Obligatoire | Rôle |
+|---|---|---|
+| `_build_field_processors(cfg)` | oui | instancie les processeurs de champs du YAML |
+| `build_reports_markdown(results, quality)` | en pratique oui | rapports de qualité et d'outliers de l'endpoint |
+| `preprocess(df_raw)` | non | colonne calculée avant le traitement des champs — E11 y précalcule son témoin de non-activité globale (`e11_rdcc/global_na.py`) |
+| `preprocess_exclude_columns()` | non | colonnes ajoutées par `preprocess()` à exclure des livrables |
 
-Les trois familles de contrôle implémentent directement `FieldProcessor` : elles ne produisent
-pas de mapping table, seulement un rapport d'anomalies.
+Tout le reste — chargement, parallélisme, assemblage du classeur, rapports, dépôt, état,
+notification — est générique et n'a pas à être redéfini.
 
-`process_fields()` exécute tous les processeurs sur le **même instantané brut** (aucun ne dépend
-de la colonne de sortie d'un autre) — les champs catégoriels (appels Claude, attente réseau)
-s'exécutent donc en concurrence via `ThreadPoolExecutor`.
+## Contrat d'un champ
 
-## Décision H — chaque API est un package auto-contenu
-
-**Un champ partagé par plusieurs APIs est copié dans chaque package, il n'est pas factorisé dans
-un module commun.** Seule l'infrastructure générique et indépendante des champs (I/O, état
-incrémental, email, SharePoint, l'ABC `FieldProcessor`, l'orchestrateur, les règles transverses)
-vit dans `shared/`.
-
-Raisons :
-1. Le cache warm-start est naturellement scopé par API (déjà le cas pour `NomCorrespondant` dans
-   l'ancien repo — `validated_classif_nomcorrespondant_e08_ocd.json` vs `..._e11_rdcc.json`). Le
-   cache `Devise` de l'ancien repo était global à toutes les APIs — un défaut de conception
-   corrigé ici (`validated_classif_devise_e11_rdcc.json`).
-2. « Le même champ » diverge vite en pratique. `NomDonneurOrdre` en est l'illustration :
-   rapprochement fiscal DGI sur E07 et E08, Claude avec recherche web sur E10, l'émetteur y étant
-   étranger. Un module partagé optimisé pour le cas simple deviendrait un frein, ou imposerait
-   une abstraction prématurée.
-
-E07_FS et E10_FE ont été construits ainsi, à partir d'une copie des modules d'E08 puis adaptés.
-Aucun couplage entre packages d'API.
-
-Le prix de cette décision est la dérive possible entre copies :
-`tests/test_coherence_packages.py` vérifie que les mécanismes transverses — étape `MAP_CIBLE`,
-envoi des lots Claude en parallèle — sont présents dans tous les packages qui doivent les porter.
-
-## FieldResult — le contrat entre un champ et l'orchestrateur
+Un champ est un `FieldProcessor` (`shared/field_processor.py`) dont la méthode de traitement
+retourne un `FieldResult` :
 
 ```python
 @dataclass
 class FieldResult:
     df: pd.DataFrame                     # colonnes ajoutées par ce champ
-    classification_df: Optional[pd.DataFrame]   # brut -> normalisé, OUTLIER inclus ; None si pas de concept de classification
+    classification_df: Optional[pd.DataFrame]   # mapping table brut -> normalisé ; None si le champ n'en produit pas
     outliers_df: pd.DataFrame            # stats outliers (catégoriel) ou anomalies (contrôle)
-    exclude_from_export: list            # colonnes intermédiaires exclues (extraction ad hoc)
-    stats: dict                          # alimente le rapport de qualité (logs + email)
+    exclude_from_export: list            # colonnes intermédiaires exclues des livrables
+    stats: dict                          # alimente le rapport de qualité et l'email
     sheet_names: dict                    # noms des feuilles Excel associées
 ```
 
-L'orchestrateur ne manipule que cette structure : il ignore ce qu'est une devise, un pays ou un
-solde.
+Le `type` déclaré dans le YAML sélectionne la famille, le `name` sélectionne le module du
+package. Un type ou un nom inconnu échoue au démarrage (`shared/config_validate.py`).
 
-## Modules partagés
+| `type` | Implémentation | Endpoints |
+|---|---|---|
+| `categorical` | `shared/field_processor.py::CategoricalFieldProcessor`, spécialisé par `{api}/fields/{champ}.py` | les 5, soit 23 couples champ/API |
+| `numeric_coherence` | `e11_rdcc/fields/numeric_coherence.py` | E11 |
+| `numeric_validation` | `e09_pe/fields/echeances.py` | E09 |
+| `transaction_validation` | `e07_fs/fields/transactions.py`, `e10_fe/fields/transactions.py` | E07, E10 |
 
-| Module | Rôle |
-|---|---|
-| `base_api_pipeline.py` | orchestrateur d'une exécution, de bout en bout |
-| `field_processor.py` | contrat `FieldProcessor` / `FieldResult`, `CategoricalFieldProcessor` |
-| `config.py`, `config_validate.py` | fusion du YAML d'API avec `config_base.yaml`, validation au démarrage |
-| `db_connector.py`, `query_columns.py` | chargement SQL : projection des colonnes utiles, `CAST` des colonnes texte, lecture par tranches, reprise sur coupure réseau |
-| `state_store.py` | état incrémental, un fichier JSON par API sous `STATE_DIR` |
-| `na_rule.py` | règle NA, appliquée en dernier et vectorisée |
-| `referentiel_cibles.py` | valeur déjà conforme au référentiel (étape `MAP_CIBLE`), comparaison insensible à la casse |
-| `dgi_cache.py` | mémoire des rapprochements fiscaux déterministes, avec empreinte de la base DGI |
-| `claude_client.py` | appels au modèle de langage : liste fermée, arbitrage, recherche web |
-| `claude_batches.py` | découpage en lots, envoi en parallèle, plafond de valeurs par exécution |
-| `corrections_history.py` | historique des corrections métier appliquées, alimente l'onglet `Instructions` |
-| `writer.py`, `build_tables.py` | assemblage et écriture du classeur |
-| `report_templates.py`, `quality_report.py`, `pdf_report.py` | rapports de qualité et d'outliers, rendu PDF |
-| `email_notifier.py`, `sharepoint_uploader.py` | notification et dépôt distant, tous deux optionnels |
-| `env_loader.py`, `logging_conf.py`, `console.py`, `errors.py`, `frame_utils.py` | socle technique |
+Les trois familles de contrôle implémentent directement `FieldProcessor` : pas de mapping table,
+seulement un rapport d'anomalies.
+
+## Ajouter un endpoint
+
+1. Créer `e0X_xxx/` : `config/E0X_XXX.yaml`, `fields/`, `pipeline.py`, `run_pipeline.py`,
+   `reports.py`, `apply_corrections.py`, `referentiel/`.
+2. Partir d'une copie des modules de champs d'un endpoint proche — E08 pour un flux à
+   rapprochement fiscal, E10 pour un flux à émetteur étranger — puis adapter.
+3. Déclarer les champs dans le YAML ; la validation au démarrage signale ce qui manque.
+4. Ajouter le package aux tests de cohérence inter-packages.
+
+Aucun endpoint existant n'est modifié par cette opération.
 
 ## Dépendances
 
-Voir `requirements.txt`. `rapidfuzz` est requis par le rapprochement fiscal DGI
-(`{api}/fields/_entity_matching.py`, E07, E08 et E10) ; `pycountry`, `babel` et `geonamescache`
-construisent le référentiel Pays en code. Aucune infrastructure locale à héberger : pas de modèle
-exécuté sur site, pas de service tiers à déployer.
-
-## Diagramme de la pipeline
-
-```
-                 ┌──────────────────────┐
-                 │  load_data()         │  (fichier local | SQL Initial | SQL Incremental)
-                 └──────────┬───────────┘
-                            │ df_raw
-                 ┌──────────▼───────────┐
-                 │  preprocess()        │  (point d'extension ; non-activité globale pour E11)
-                 └──────────┬───────────┘
-                            │
-                 ┌──────────▼───────────┐
-                 │  process_fields()    │──► ThreadPoolExecutor (champs catégoriels, attente réseau)
-                 │                      │──► séquentiel (familles de contrôle, calcul local)
-                 └──────────┬───────────┘
-                            │ df_final, [(processor, FieldResult)]
-                            ▼
-                    compute_quality()  (logs + alimente l'email)
-                            │
-                            ▼
-                 assemble_output_workbook()
-        {Champ}: classification | Anomalies_* | Instructions
-                            │
-                            ▼
-                      write_output()  (local, OUTPUT_BASE)
-                            │
-                            ▼
-                 _generate_pdf_reports()  (qualité + outliers)
-                            │
-                            ▼
-                     upload_output()  (SharePoint si configuré)
-                            │
-                            ▼
-     persist_state()  (fichier JSON local sous STATE_DIR — horodatage traité et cumulatifs
-                       — PAS une table SQL, la base source reste lecture seule)
-                            │
-                            ▼
-                    notify()  (email OK/KO : stats de l'exécution + stats globales)
-```
+Voir `requirements.txt`. `rapidfuzz` sert au rapprochement fiscal
+(`{api}/fields/_entity_matching.py`, E07, E08, E10) ; `pycountry`, `babel` et `geonamescache`
+construisent le référentiel Pays en code. Aucune infrastructure à héberger : pas de modèle exécuté
+sur site, pas de service tiers à déployer.

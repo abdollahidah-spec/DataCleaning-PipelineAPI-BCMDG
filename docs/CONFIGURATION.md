@@ -1,205 +1,77 @@
 # Configuration
 
+Deux niveaux : les secrets et les chemins propres au poste, dans `.env` ; les réglages du
+traitement, dans les YAML. Les réglages propres à un endpoint sont décrits dans le README de son
+package.
+
 ## `.env`
 
-Copier `.env.example` vers `.env` et renseigner :
+Copier `.env.example` vers `.env` et renseigner. Ce fichier n'est jamais versionné.
 
 | Variable | Utilisation |
 |---|---|
-| `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_DRIVER` | Connexion SQL Server — **lecture seule** sur toutes les tables sources (E11, E09, ...) — aucune écriture/DDL autorisée sur cette base |
-| `ANTHROPIC_API_KEY` | Fallback Claude — NomCorrespondant (E11, E08), Produits/NomDonneurOrdre/Beneficiaire/Pays (E08), NomDonneurOrdre/Beneficiaire/NatureEconomique/Pays (E07, E10). Beneficiaire utilise en plus l'outil serveur `web_search` (facturé à l'usage) |
-| `DGI_BASE_PATH`, `PUBLIC_ENT_PATH` | Fichiers de référence externes (E08 et E07 : `NomDonneurOrdre`, `Beneficiaire` ; E10 : `Beneficiaire`) — base fiscale DGI et liste des entreprises publiques. Toujours un chemin explicite en `.env`, jamais en dur dans le code (voir `e08_ocd/fields/_entity_matching.py`). `DGI_BASE_PATH` absent → erreur claire au chargement ; `PUBLIC_ENT_PATH` absent → liste vide, dégradé propre (pas d'erreur, juste aucune entreprise publique reconnue) |
-| `OUTPUT_BASE` | **Stockage local/réseau — pas besoin de SharePoint.** Vide = livrables dans `{api}/outputs/` (ex: `e11_rdcc/outputs/`, `e09_pe/outputs/` — fonctionne déjà). Renseigné (ex: `D:\BCM_Outputs` ou `\\serveur\partage`) = tous les livrables écrits sous `{OUTPUT_BASE}/{API_ID}/...` — nom de l'API en MAJUSCULES, sans niveau `outputs/` intermédiaire (ex: `D:\BCM_Outputs\E11_RDCC\`, `D:\BCM_Outputs\E09_PE\`) — un dossier par API, jamais de collision même en lancement parallèle |
-| `STATE_DIR` | **État incrémental — fichier JSON local, pas une table SQL.** Vide = `state/` à la racine du repo, un fichier par API (`state/E11_RDCC_run_state.json`, `state/E09_PE_run_state.json`...). Voir `shared/state_store.py` |
-| `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_URL`, `SHAREPOINT_FOLDER_PATH` | Upload SharePoint (optionnel, pour plus tard — si absent, l'upload est simplement ignoré, pas d'erreur) |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWORD`, `EMAIL_TO` | Notifications email OK/KO (optionnel, pour plus tard — si absent, notification simplement ignorée). Voir [README.md](../README.md#notifications-email) pour générer le mot de passe d'application Gmail |
-| `EMAIL_MAX_ATTACHMENT_MB` | Taille max de la pièce jointe email avant omission (défaut 15) |
-| `LOG_LEVEL` | Niveau de log (défaut `INFO`) |
+| `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_DRIVER` | Connexion à la base de collecte, en **lecture seule stricte** sur toutes les tables sources : aucune écriture, aucun DDL |
+| `ANTHROPIC_API_KEY` | Résolution assistée des champs qui la prévoient. Facturée à l'appel, et à l'usage pour les champs qui recourent à la recherche web |
+| `DGI_BASE_PATH` | Base fiscale, utilisée par le rapprochement des raisons sociales. Absente : erreur explicite au chargement |
+| `PUBLIC_ENT_PATH` | Liste des entreprises publiques. Absente : liste vide, aucune entreprise publique reconnue, pas d'erreur |
+| `OUTPUT_BASE` | Racine des livrables. Vide : `{api}/outputs/`. Renseignée : `{OUTPUT_BASE}/{API_ID}/`, nom de l'endpoint en majuscules — un dossier par endpoint, jamais de collision en lancement parallèle |
+| `STATE_DIR` | État incrémental et mémoires dérivées, un fichier JSON par endpoint. Vide : `state/` à la racine du dépôt |
+| `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_URL`, `SHAREPOINT_FOLDER_PATH` | Dépôt distant, optionnel : absent, le dépôt est ignoré sans erreur |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_APP_PASSWORD`, `EMAIL_TO` | Notification de fin d'exécution, optionnelle : absente, la notification est ignorée sans erreur |
+| `EMAIL_MAX_ATTACHMENT_MB` | Taille maximale d'une pièce jointe avant omission (défaut 15) |
+| `LOG_LEVEL` | Niveau de journalisation (défaut `INFO`) |
 
 ## `shared/config_base.yaml` — socle commun
 
-Toutes les APIs héritent de ce fichier ; un `config/{API}.yaml` ne redéfinit que ce qui change
-(fusion profonde, voir `shared/config.py::load_config`).
+Tous les endpoints héritent de ce fichier ; un `config/{API}.yaml` ne redéfinit que ce qui change
+(fusion profonde, `shared/config.py::load_config`).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `pipeline_version` | `1.0.0` | version reportée dans les rapports et l'email |
-| `input.type` | `sqlserver` | source : `sqlserver`, ou un fichier local (`csv`, `excel`) |
-| `input.sep`, `input.encoding`, `input.sheet` | `;`, `utf-8-sig`, `0` | lecture d'un fichier local. L'encodage et le séparateur déclarés sont essayés d'abord, puis des replis (`cp1252`, `latin-1` ; `,`, tabulation) — un CSV exporté depuis Excel en français reste lisible |
-| `load.chunk_size` | `50000` | lecture par paquets, pour une progression visible dans les logs pendant un chargement long. `0` ou vide = lecture en un seul bloc |
-| `load.initial_since` | vide | borne le chargement initial à partir de cette date (AAAA-MM-JJ). Renseigné à `2024-01-01` sur E07 et E10 |
-| `load.cast_max_text` | `true` | voir [Performance d'un chargement](#performance-dun-chargement-réglages-communs) |
+| `pipeline_version` | `1.0.0` | version reportée dans les rapports et la notification |
+| `input.type` | `sqlserver` | source : la base, ou un fichier local (`csv`, `excel`) |
+| `input.sep`, `input.encoding`, `input.sheet` | `;`, `utf-8-sig`, `0` | lecture d'un fichier local. L'encodage et le séparateur déclarés sont essayés d'abord, puis des replis (`cp1252`, `latin-1` ; virgule, tabulation) — un CSV exporté depuis Excel en français reste lisible |
+| `load.chunk_size` | `50000` | lecture par paquets, pour une progression visible pendant un chargement long. `0` ou vide : lecture en un seul bloc |
+| `load.initial_since` | vide | borne le chargement initial à partir de cette date. Renseignée au 01/01/2024 sur E07 et E10 |
+| `load.cast_max_text` | `true` | conversion des colonnes texte volumineuses à la lecture, voir ci-dessous |
 | `load.retries`, `load.retry_wait_seconds` | `2`, `30` | reprise sur coupure réseau passagère |
 | `output.format` | `csv` | format de l'extraction ad hoc |
-| `llm.model` | `claude-sonnet-5` | modèle appelé pour les champs à résolution assistée |
-| `llm.batch_size` | `20` | nombre de valeurs par appel ; surchargé par champ (`35` pour les champs à recherche web) |
+| `llm.model` | `claude-sonnet-5` | modèle appelé pour la résolution assistée |
+| `llm.batch_size` | `20` | valeurs par appel ; porté à `35` sur les champs à recherche web |
 | `llm.max_retry`, `llm.retry_wait` | `3`, `2` | nouvelles tentatives sur un appel en échec, et attente entre deux |
 | `llm.concurrency` | `4` | lots envoyés en parallèle |
 | `llm.max_values_per_run` | vide | plafond de valeurs nouvelles par exécution et par champ |
-| `reports.top_n_outliers_detail` | `100` | valeurs détaillées par champ dans le rapport PDF. `0` = aucune limite |
-| `reports.max_anomaly_rows_excel` | `200000` | lignes d'anomalies écrites dans un onglet Excel ; au-delà, l'onglet garde cet extrait et le détail intégral part dans un CSV à côté du classeur. `0` = aucune limite |
-| `email.enabled`, `email.attach_workbook_max_mb` | `true`, `15` | notification et taille max du classeur joint |
+| `reports.top_n_outliers_detail` | `100` | valeurs détaillées par champ dans le rapport PDF. `0` : aucune limite |
+| `reports.max_anomaly_rows_excel` | `200000` | lignes d'anomalies écrites dans un onglet Excel ; au-delà, l'onglet garde cet extrait et le détail intégral part dans un CSV à côté du classeur. `0` : aucune limite |
+| `email.enabled`, `email.attach_workbook_max_mb` | `true`, `15` | notification, et taille maximale du classeur joint |
 
-## `e11_rdcc/config/E11_RDCC.yaml`
+## Surcharges par endpoint
 
-Fusionné en profondeur avec `shared/config_base.yaml` (le YAML spécifique surcharge uniquement
-les clés qu'il redéfinit — voir `shared/config.py::load_config`).
+| Endpoint | Table source | Ce que le YAML ajoute |
+|---|---|---|
+| [E07_FS](../e07_fs/README.md) | `E7EtatBcmFluxSortants` | 7 champs catégoriels et un bloc de contrôle des transactions ; rapprochement fiscal sur `NomDonneurOrdre` ; gabarit des messages sans activité ; borne d'historique |
+| [E08_OCD](../e08_ocd/README.md) | `E8EtatBcmOuvertureCreditDocumentaires` | 6 champs catégoriels ; rapprochement fiscal sur `NomDonneurOrdre` ; recherche web sur `Beneficiaire` ; référentiel `Produits` construit depuis le fichier métier |
+| [E09_PE](../e09_pe/README.md) | `E9EtatBcmPrevisionEcheances` | 1 champ catégoriel et un bloc de contrôle des échéances |
+| [E10_FE](../e10_fe/README.md) | `E10EtatBcmFluxEntrants` | même structure qu'E07, rôles inversés : recherche web sur `NomDonneurOrdre`, rapprochement fiscal sur `Beneficiaire` |
+| [E11_RDCC](../e11_rdcc/README.md) | `E11EtatBcmReleveDesComptesCorrespondants` | 2 champs catégoriels et un bloc de cohérence numérique ; témoin de non-activité global |
 
-### Clés principales
-
-- `input.table_name` / `input.dt_cr_column` — table source et colonne utilisée pour le delta.
-- `load.mode` — `auto` (défaut, déduit de l'état en base) / `initial` / `incremental`.
-- `fields[]` — liste des champs traités, un bloc par champ :
-  - `type: categorical` — nécessite `columns.field`, `columns.field_out`, `columns.ref_transaction`,
-    `columns.ref_banque`, `referentiel_path`. `NomCorrespondant` a en plus un bloc `llm:`.
-    Pour E11, `ref_transaction: "_E11_GlobalNoActivite"` (voir règle NA ci-dessous).
-  - `type: numeric_coherence` — nécessite `columns.{solde_debut,mvts_debiteurs,mvts_crediteurs,
-    solde_fin,date_fin,dt_cr,ref_banque,nom_correspondant,devise,num_compte}`, `tolerance.absolute`,
-    `grouping_key_temporal_continuity` (CONFIRMÉ par le Business Analyst :
-    `[RefBanque, NomCorrespondant, NumCompte, Devise]`).
-
-**Règle NA** (`columns.ref_transaction`, champs catégoriels) : `field == 'NA' ET ref_transaction
-== 'NA'` → `'NA'` (ligne "sans activité" légitime) ; `field == 'NA' ET ref_transaction != 'NA'`
-→ `OUTLIER` (NA suspecte). Correctif Business Analyst : ce témoin ne peut pas être une seule
-colonne (ex: NumCompte seul) — la non-activité légitime doit être vérifiée GLOBALEMENT sur tout
-le gabarit du ticket en une fois (NomCorrespondant, Devise, NumCompte tous 'NA' ET les 4 montants
-tous à 0). `ref_transaction` pointe donc vers `_E11_GlobalNoActivite`, une colonne synthétique
-précalculée une seule fois pour tous les champs (voir `e11_rdcc/global_na.py` et
-`E11Pipeline.preprocess()`), et non vers NumCompte directement.
-- `output.local_dir` / `output.classification_path` — chemin de sortie local (sous `OUTPUT_BASE`
-  si défini) et chemin SharePoint stable (écrasé à chaque run) du classeur unique de sortie.
-- `email.enabled` / `email.attach_workbook_max_mb`.
-- `reports.top_n_outliers_detail` — nombre max de valeurs détaillées **par champ** dans le rapport
-  PDF (défaut `100` dans `shared/config_base.yaml` ; `0` = aucune limite). La liste exhaustive
-  reste dans le classeur Excel de classification.
-- L'onglet `Instructions` du classeur n'est plus pré-rempli : il porte l'**historique en lecture
-  seule** des corrections manuelles déjà appliquées (`shared/corrections_history.py`, un fichier
-  `{api}/referentiel/corrections_history_{api_id}.json` par API) — vide au tout premier run.
-- `schedule` — métadonnées uniquement (documentation de l'intention Task Scheduler), non lues
-  par le code.
-
-### Points explicitement différés par le métier (`TODO-VALIDATE` dans le YAML)
-
-- Tolérance métier (`tolerance.absolute`).
-
-Les noms de colonnes SQL et la clé de regroupement pour la continuité temporelle sont CONFIRMÉS
-par le Business Analyst (test métier) : `[RefBanque, NomCorrespondant, NumCompte, Devise]` — ce
-ne sont plus des placeholders.
-
-Ces valeurs sont des placeholders raisonnables, pas des hypothèses figées dans le code — un
-changement se fait uniquement dans le YAML.
-
-## `e09_pe/config/E09_PE.yaml`
-
-Même structure que E11 (fusion avec `shared/config_base.yaml`), en plus simple :
-
-- `input.table_name: "E9EtatBcmPrevisionEcheances"`.
-- `fields[]` :
-  - `Devise` (`type: categorical`) — référentiel ISO 4217 identique à E11, cache warm-start
-    propre à E09. `ref_transaction: "NumCredoc"` (témoin NA simple — un seul champ catégoriel sur
-    E09, donc pas besoin du correctif "NA globale" d'E11, voir `e09_pe/fields/devise.py`).
-  - `Echeances` (`type: numeric_validation`) — nécessite `columns.{montant_echeance,date_echeance,
-    dt_cr,ref_banque,num_credoc}`. 2 règles indépendantes (pas de cohérence inter-lignes, pas de
-    `grouping_key`, pas de `tolerance`) : `AMOUNT_POSITIVE` (montant > 0) et `DATE_VALIDITY`
-    (date d'échéance strictement postérieure à `dtCr`) — voir `e09_pe/fields/echeances.py`.
-- `email.display_name: "E09 – PE"` — libellé utilisé dans le sujet/corps de l'email.
-
-**Colonnes SQL confirmées** (vérifié directement contre la table de production le 2026-08-18,
-`SELECT TOP 1 * FROM E9EtatBcmPrevisionEcheances`) : `NumCredoc`, `RefBanque`, `Devise`,
-`MontantEcheance`, `DateEcheance`, `dtCr` — les noms par convention PascalCase utilisés dans le
-YAML correspondent exactement aux colonnes réelles, aucun ajustement nécessaire.
-
-## `e08_ocd/config/E08_OCD.yaml`
-
-`input.table_name: "E8EtatBcmOuvertureCreditDocumentaires"`. 6 champs, tous `type: categorical` :
-
-- `Devise`, `NomCorrespondant`, `Produits` — mêmes patterns qu'E11/E09 (référentiel + fallback
-  Claude). `Produits` construit son référentiel depuis `req/DataCleaning_E08 OCD_Produits.xlsx`.
-- `NomDonneurOrdre` — nécessite en plus `columns.nif_nni` (optionnel : si absente des données,
-  l'étape de matching NIF exact est simplement sautée) et un bloc `matching` :
-  `strong_threshold`/`strong_gap`/`arbitrage_min`/`batch_size` (seuils rapidfuzz contre la base
-  DGI — valeurs reprises telles quelles de l'ancien repo, déjà validées en prod sur E07/E08).
-- `Beneficiaire` — bloc `llm.web_search_max_uses` (défaut 3) : nombre max de recherches web
-  facturées par valeur à résoudre.
-- `Pays` — pas de référentiel Excel BCM dédié (le référentiel est construit en code depuis
-  pycountry/babel/geonamescache) ; `referentiel_path` pointe vers `pays_addr_keywords.json` (le
-  seul fichier référentiel réellement utilisé par la cascade) pour satisfaire la validation de
-  config générique, qui exige `referentiel_path` pour tout champ `categorical`.
-
-Tous les champs catégoriels partagent le même témoin NA (`ref_transaction: "NumCredoc"`),
-chacun indépendamment — voir `e08_ocd/config/E08_OCD.yaml` pour le raisonnement complet (pas de
-correctif "NA globale" comme pour E11 : aucun gabarit "sans activité" multi-champs documenté
-pour E08).
-
-**Décision confirmée avec l'utilisateur** : le champ Pays bascule d'Ollama/qwen2.5:14b (modèle
-local, ancien repo) vers Claude — cohérent avec le reste du repo (aucune infra locale à héberger).
-Contrairement à l'ancien repo, les résolutions Claude de Pays sont maintenant mises en cache
-(`validated_classif_pays_e08_ocd.json`) — Claude étant facturé à l'appel, contrairement à Ollama.
-
-**Filtre SITUATION de la base DGI** : décision confirmée de reproduire le comportement de
-l'ancien repo tel quel — aucun filtre sur `SITUATION` (ACTIF/EN CESSATION), une entreprise en
-cessation d'activité reste matchable comme une entreprise active.
-
-## `e07_fs/config/E07_FS.yaml`
-
-`input.table_name: "E7EtatBcmFluxSortants"`. 7 champs `type: categorical` (TypeSwift,
-ModeReglement, Devise, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays), tous avec
-`ref_transaction: "ReferenceTransaction"` comme témoin NA, et un bloc
-`type: transaction_validation` :
-
-- `columns` : `montant_transaction`, `taux_de_change`, `date_transaction`, `dt_cr`,
-  `ref_banque`, `reference_transaction`, `pays` (toutes obligatoires, vérifiées au chargement).
-- `date_inclusive` (défaut `false`) : le ticket demande `dateTransaction < dtCr` (strict) — une
-  transaction datée du jour même de `dtCr` est une anomalie. `true` autorise le même jour.
-- `no_activity.template_na_columns` : colonnes qui doivent valoir `NA` sur un message sans
-  activité ; `no_activity.pays_value` (défaut `NoAs`). Ces colonnes sont ajoutées
-  automatiquement à la requête SQL, même si aucun champ ne les normalise (`SourceDevise`,
-  `Produit`).
-- `TypeSwift` : `flux: "FS"` sélectionne la liste `valid_fs` du référentiel. La colonne source
-  s'appelle réellement `TypeSwfit` (orthographe du schéma BCM).
-- `NomDonneurOrdre` : `columns.nif_nni: "NifNni"` et bloc `matching`, comme E08.
-- `load.initial_since: 2024-01-01` : l'Initial Load ne rapatrie que `dtCr >= 2024-01-01`.
-
-## `e10_fe/config/E10_FE.yaml`
-
-`input.table_name: "E10EtatBcmFluxEntrants"`. Même structure qu'E07, avec ces différences :
-
-- `TypeSwift` : `flux: "FE"` (liste `valid_fe`).
-- `NomDonneurOrdre` : pas de `nif_nni` ni de `matching` — émetteur étranger, Claude +
-  recherche web (`llm.batch_size: 35`, `llm.web_search_max_uses: 3`, valeurs de l'ancien repo).
-- `Beneficiaire` : `columns.nif_nni: "NifNni"` et bloc `matching` (92/8/70/300),
-  `llm.batch_size: 35` pour l'arbitrage DGI.
-- `no_activity.template_na_columns` sans `SourceDevise` (colonne absente de la table).
-- `load.initial_since: 2024-01-01`.
+Tout champ `categorical` exige `columns.field`, `columns.field_out`, `columns.ref_transaction`,
+`columns.ref_banque` et `referentiel_path` ; les blocs de contrôle exigent leurs propres colonnes.
+Une clé manquante ou un nom de champ inconnu arrête l'exécution au démarrage.
 
 ## Performance d'un chargement (réglages communs)
 
-Mesures faites sur la vraie base le 17-18/09/2026, poste de la BCM, pilote ODBC
-« SQL Server » (le seul installé ; « ODBC Driver 18 for SQL Server » serait plus rapide).
-
-| Réglage (`load` / `llm`) | Effet |
+| Réglage | Effet |
 |---|---|
-| `load.cast_max_text` (défaut `true`) | Colonnes texte `NVARCHAR(MAX)` lues via `CAST(... AS NVARCHAR(4000))`. Sans cela, le pilote lit cellule par cellule : 20 000 lignes en 11,6 s contre 2,7 s. Sur E10, le chargement complet passe d'environ 1 h 30 à environ 8 min. Valeur réelle la plus longue relevée : 149 caractères, donc aucune troncature |
-| `load.retries` (défaut 2), `load.retry_wait_seconds` (30) | Nouvelle tentative sur coupure réseau passagère (VPN), lecture reprise depuis le début. Une erreur SQL (colonne inconnue, droits) échoue immédiatement |
-| `llm.concurrency` (défaut 4) | Lots Claude envoyés en parallèle. Le temps d'un appel est de l'attente réseau, surtout avec recherche web. `1` = comportement séquentiel d'origine |
-| `llm.max_values_per_run` (vide = aucun plafond) | Plafond de valeurs NOUVELLES envoyées à Claude par run et par champ. Au-delà : OUTLIER pour ce run, rien en cache, reproposé au run suivant. Utile pour borner la durée et le coût d'un premier chargement |
-| `llm.concurrency` s'applique à TOUS les champs à fallback Claude des 5 APIs (NomCorrespondant, Produits, NomDonneurOrdre, Beneficiaire, NatureEconomique, Pays) | — |
-| `matching.cache_resolutions` (défaut `true`, champs à rapprochement DGI) | Mémorise les résolutions DÉTERMINISTES du rapprochement DGI (`DGI_EXACT_NORM`, `DGI_FUZZY_STRONG`, `DGI_NO_MATCH`) dans `{STATE_DIR}/dgi_resolution_{api}_{champ}.json`, avec une empreinte de la base DGI : un run suivant ne refait pas les ~25 min de rapprochement. Base DGI modifiée → empreinte différente → tout est recalculé. Les arbitrages Claude restent dans le cache warm-start du champ |
+| `load.cast_max_text` | Les colonnes texte de la base sont déclarées sans longueur maximale ; le pilote ODBC les lit alors cellule par cellule. Converties à la lecture vers une longueur bornée, 20 000 lignes passent de 11,6 s à 2,7 s. La valeur réelle la plus longue relevée sur les cinq tables mesure 149 caractères : aucune troncature |
+| `load.chunk_size` | Donne une progression dans la journalisation pendant un chargement long, au lieu d'un silence |
+| `load.retries`, `load.retry_wait_seconds` | Nouvelle tentative sur coupure réseau passagère, lecture reprise depuis le début. Une erreur SQL — colonne inconnue, droits insuffisants — échoue immédiatement |
+| `llm.concurrency` | Le temps d'un appel est presque entièrement de l'attente réseau, surtout avec recherche web. Les enchaîner un par un allongeait fortement un premier chargement |
+| `llm.max_values_per_run` | Borne la durée et le coût d'un premier chargement. Au-delà du plafond, les valeurs restent `OUTLIER`, ne sont pas mémorisées, et sont reproposées à l'exécution suivante |
+| `matching.cache_resolutions` | Mémorise les résolutions déterministes du rapprochement fiscal, avec une empreinte de la base fiscale : l'exécution suivante ne le refait pas. Base modifiée, empreinte différente, tout est recalculé |
 
-**Volume Claude d'un premier chargement** (valeurs distinctes depuis 2024, mesuré) :
-
-| Champ | Valeurs distinctes | À résoudre par Claude | Appels |
-|---|---|---|---|
-| E10 `NomDonneurOrdre` | 15 245 | 0 (référentiel + cache + classification locale) | 0 |
-| E10 `NatureEconomique` | 448 | 14 | 1 |
-| E10 `Pays` | 1 081 | 7 | 1 |
-| E07 `Beneficiaire` | 27 754 | 1 771 | 355, **avec recherche web** |
-
-Les 355 appels avec recherche web d'E07 dominent le premier chargement (30 s à 1 min par
-appel) : environ 3 à 6 h en série, ramenées à environ 45 à 90 min avec `llm.concurrency: 4`.
-C'est une dépense unique : les résolutions sont mises en cache et les runs incrémentaux
-suivants n'ont que quelques valeurs nouvelles à traiter. Pour un premier essai rapide,
-mettre `llm.max_values_per_run: 50` sur le champ `Beneficiaire`.
+Le coût d'un premier chargement, endpoint par endpoint, figure dans la section *Points de coût*
+du README de chaque package.
 
 ## Installation
 
