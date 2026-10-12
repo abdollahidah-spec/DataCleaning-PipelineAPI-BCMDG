@@ -46,17 +46,24 @@ _CSS = """
 """
 
 
-def markdown_to_pdf(markdown_text: str, out_path: Path) -> Path:
+def markdown_to_pdf(markdown_text: str, out_path: Path, keep_markdown: bool = True) -> Path:
     """
     Convertit un texte Markdown (titres, gras, italique, tableaux `| a | b |`) en
     PDF écrit sur disque. Lève RuntimeError avec un message explicite si xhtml2pdf
     rapporte une erreur de rendu (out_path n'est alors pas un PDF exploitable).
+
+    `keep_markdown` (défaut) écrit aussi le Markdown source à côté du PDF, même nom
+    et extension `.md` : le rapport reste lisible et comparable d'un run à l'autre
+    sans ouvrir un PDF, et peut être repris dans un autre support (page, courriel,
+    document) sans re-générer les chiffres.
     """
     html_body = _markdown.markdown(markdown_text, extensions=["tables"])
     html = f"<html><head>{_CSS}</head><body>{html_body}</body></html>"
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if keep_markdown:
+        out_path.with_suffix(".md").write_text(markdown_text, encoding="utf-8")
     with open(out_path, "wb") as f:
         result = pisa.CreatePDF(html, dest=f)
     if result.err:
