@@ -173,12 +173,12 @@ retourne un `FieldResult` :
 ```python
 @dataclass
 class FieldResult:
-    df: pd.DataFrame                     # colonnes ajoutées par ce champ
+    df: pd.DataFrame                            # colonnes ajoutées par ce champ
     classification_df: Optional[pd.DataFrame]   # mapping table brut -> normalisé ; None si le champ n'en produit pas
-    outliers_df: pd.DataFrame            # stats outliers (catégoriel) ou anomalies (contrôle)
-    exclude_from_export: list            # colonnes intermédiaires exclues des livrables
-    stats: dict                          # alimente le rapport de qualité et la notification
-    sheet_names: dict                    # noms des feuilles Excel associées
+    outliers_df: pd.DataFrame                   # stats outliers (catégoriel) ou anomalies (contrôle)
+    exclude_from_export: list                   # colonnes intermédiaires exclues des livrables
+    stats: dict                                 # alimente le rapport de qualité et la notification
+    sheet_names: dict                           # noms des feuilles Excel associées
 ```
 
 Le `type` déclaré dans le YAML sélectionne la famille, le `name` sélectionne le module du
