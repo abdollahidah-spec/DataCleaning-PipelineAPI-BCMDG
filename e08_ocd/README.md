@@ -73,7 +73,7 @@ python -m e08_ocd.run_pipeline --config e08_ocd/config/E08_OCD.yaml --mode initi
 python -m e08_ocd.run_pipeline --config e08_ocd/config/E08_OCD.yaml --mode incremental
 
 # Essai hors ligne sur un fichier local : ni email, ni SharePoint, ni état incrémental
-python -m e08_ocd.run_pipeline --config e08_ocd/config/E08_OCD.yaml --input tests/fixtures/e08_ocd_sample.csv
+python -m e08_ocd.run_pipeline --config e08_ocd/config/E08_OCD.yaml --input data/extrait.csv
 
 # Application des corrections métier (onglet Instructions : Champ | Input | Label_Attendu)
 python -m e08_ocd.apply_corrections --file "<OUTPUT_BASE>\E08_OCD\E08_OCD_classification.xlsx"
@@ -118,9 +118,3 @@ compare chaque libellé nouveau à l'ensemble de la base fiscale. Les deux sont 
 cache, par `llm.max_values_per_run` et par la mémoire des résolutions DGI. Le premier chargement
 reste la seule exécution réellement coûteuse ; les runs incrémentaux ne traitent que les valeurs
 nouvelles.
-
-## Tests
-
-```bash
-python -m pytest tests/test_e08_reports.py tests/test_produits.py tests/test_nomdonneurordre.py tests/test_beneficiaire.py tests/test_pays.py tests/test_entity_matching.py tests/test_map_cible_e08_e11.py -q
-```

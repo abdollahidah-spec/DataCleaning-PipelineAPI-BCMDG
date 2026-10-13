@@ -4,7 +4,6 @@
 #
 #   git archive --format=zip -o livraison.zip HEAD
 #
-tests/               export-ignore
 pytest.ini           export-ignore
 requirements-dev.txt export-ignore
 .gitattributes       export-ignore

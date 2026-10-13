@@ -99,7 +99,7 @@ python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --mode initial
 python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --mode incremental
 
 # Essai hors ligne sur un fichier local : ni email, ni SharePoint, ni état incrémental
-python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --input tests/fixtures/e07_fs_sample.csv
+python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --input data/extrait.csv
 
 # Application des corrections métier (onglet Instructions : Champ | Input | Label_Attendu)
 python -m e07_fs.apply_corrections --file "<OUTPUT_BASE>\E07_FS\E07_FS_classification.xlsx"
@@ -153,9 +153,3 @@ toute la cascade.
 Il s'agit d'une dépense unique : les résolutions sont mises en cache et les runs incrémentaux
 suivants ne traitent que les valeurs nouvelles. Pour un essai rapide, `llm.max_values_per_run`
 borne le nombre de valeurs envoyées par run.
-
-## Tests
-
-```bash
-python -m pytest tests/test_e07_fields.py tests/test_e07_transactions.py tests/test_e07_reports.py tests/test_e07_map_cible.py tests/test_ad_hoc_extraction_e07.py -q
-```

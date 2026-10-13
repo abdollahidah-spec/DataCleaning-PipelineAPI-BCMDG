@@ -101,7 +101,7 @@ python -m e10_fe.run_pipeline --config e10_fe/config/E10_FE.yaml --mode initial
 python -m e10_fe.run_pipeline --config e10_fe/config/E10_FE.yaml --mode incremental
 
 # Essai hors ligne sur un fichier local : ni email, ni SharePoint, ni état incrémental
-python -m e10_fe.run_pipeline --config e10_fe/config/E10_FE.yaml --input tests/fixtures/e10_fe_sample.csv
+python -m e10_fe.run_pipeline --config e10_fe/config/E10_FE.yaml --input data/extrait.csv
 
 # Application des corrections métier (onglet Instructions : Champ | Input | Label_Attendu)
 python -m e10_fe.apply_corrections --file "<OUTPUT_BASE>\E10_FE\E10_FE_classification.xlsx"
@@ -156,9 +156,3 @@ par `apply_corrections` et priment sur toute la cascade.
 Le rapprochement DGI du bénéficiaire est l'étape la plus lourde en cas de volume de libellés
 nouveaux ; il est mémorisé d'un run à l'autre. Les runs incrémentaux ne traitent que les valeurs
 nouvelles.
-
-## Tests
-
-```bash
-python -m pytest tests/test_e10_fields.py tests/test_e10_transactions.py tests/test_e10_reports.py tests/test_dgi_cache.py tests/test_ad_hoc_extraction_e10.py -q
-```

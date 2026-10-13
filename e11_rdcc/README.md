@@ -74,7 +74,7 @@ python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode in
 python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode incremental
 
 # Essai hors ligne sur un fichier local : ni email, ni SharePoint, ni état incrémental
-python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --input tests/fixtures/e11_rdcc_sample.csv
+python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --input data/extrait.csv
 
 # Application des corrections métier (onglet Instructions : Champ | Input | Label_Attendu)
 python -m e11_rdcc.apply_corrections --file "<OUTPUT_BASE>\E11_RDCC\E11_RDCC_classification.xlsx"
@@ -113,9 +113,3 @@ corrections manuelles y sont écrites par `apply_corrections` et ont priorité s
 - `.env` renseigné : accès base en lecture seule, `ANTHROPIC_API_KEY` (fallback Claude de
   `NomCorrespondant`), SMTP, `OUTPUT_BASE`, `STATE_DIR`.
 - État incrémental : `{STATE_DIR}/E11_RDCC_run_state.json` (défaut `state/`).
-
-## Tests
-
-```bash
-python -m pytest tests/test_e11_reports.py tests/test_numeric_rules.py tests/test_global_na.py tests/test_devise.py -q
-```

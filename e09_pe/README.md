@@ -69,7 +69,7 @@ python -m e09_pe.run_pipeline --config e09_pe/config/E09_PE.yaml --mode initial
 python -m e09_pe.run_pipeline --config e09_pe/config/E09_PE.yaml --mode incremental
 
 # Essai hors ligne sur un fichier local : ni email, ni SharePoint, ni état incrémental
-python -m e09_pe.run_pipeline --config e09_pe/config/E09_PE.yaml --input tests/fixtures/e09_pe_sample.csv
+python -m e09_pe.run_pipeline --config e09_pe/config/E09_PE.yaml --input data/extrait.csv
 
 # Application des corrections métier (onglet Instructions : Champ | Input | Label_Attendu)
 python -m e09_pe.apply_corrections --file "<OUTPUT_BASE>\E09_PE\E09_PE_classification.xlsx"
@@ -102,9 +102,3 @@ cascade. Les champs de validation n'ont pas de cache : une anomalie de montant o
 - `.env` renseigné : accès base en lecture seule, SMTP, `OUTPUT_BASE`, `STATE_DIR`. Aucune clé
   Claude n'est nécessaire pour cet endpoint.
 - État incrémental : `{STATE_DIR}/E09_PE_run_state.json` (défaut `state/`).
-
-## Tests
-
-```bash
-python -m pytest tests/test_e09_echeances.py tests/test_echeances_vectorise.py tests/test_e09_reports.py tests/test_devise.py -q
-```

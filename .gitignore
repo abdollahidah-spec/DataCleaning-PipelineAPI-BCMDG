@@ -39,3 +39,6 @@ e10_fe/outputs/
 # Fontes Latin Modern du générateur de PDF : téléchargées et converties à la
 # demande par scripts/polices_latex.py — régénérables, non versionnées
 assets/fonts/
+
+# Suite de tests : conservée en local, hors du dépôt
+tests/

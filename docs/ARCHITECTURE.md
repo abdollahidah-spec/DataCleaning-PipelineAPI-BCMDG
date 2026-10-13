@@ -134,7 +134,6 @@ e0X_xxx/
 └── outputs/                  livrables, si OUTPUT_BASE n'est pas défini
 
 shared/                       socle générique, sans logique métier de champ
-tests/                        51 fichiers, 450 tests
 state/                        état incrémental, un fichier par endpoint
 ```
 
@@ -310,22 +309,17 @@ une mémoire par couple champ/API.
 
 ## 7. Tests de la chaîne par API
 
-51 fichiers, 450 tests, hors réseau : la base, le modèle de langage, la messagerie et le dépôt
-distant sont tous simulés. Quatre groupes :
-
-- **par champ** — `test_devise.py`, `test_pays.py`, `test_nomdonneurordre.py`,
-  `test_beneficiaire.py`, `test_produits.py`, `test_e07_fields.py`, `test_e10_fields.py` ;
-- **par famille de contrôle** — `test_numeric_rules.py`, `test_e09_echeances.py`,
-  `test_e07_transactions.py`, `test_e10_transactions.py`, `test_global_na.py` ;
-- **par mécanisme transverse** — `test_na_rule.py` et `test_na_rule_null.py`,
-  `test_map_cible_e08_e11.py`, `test_dgi_cache.py`, `test_claude_batches.py`,
-  `test_corrections_cles.py`, `test_db_chargement.py`, `test_state_store.py` ;
-- **cohérence inter-packages** — `test_coherence_packages.py` : présence de l'étape `MAP_CIBLE`,
-  envoi des lots en parallèle, identité des copies d'un même champ entre packages (arbre
-  syntaxique comparé, commentaires exclus), et absence de redéfinition locale de la règle NA.
+Une suite de 450 tests couvre la chaîne par API. Elle s'exécute entièrement hors réseau — base,
+modèle de langage, messagerie et dépôt distant sont simulés — et n'est pas distribuée avec le
+dépôt. Quatre groupes : un par champ, un par famille de contrôle, un par mécanisme transverse, et
+un dernier dédié à la **cohérence inter-packages**.
 
 Ce dernier groupe est la contrepartie du découpage en packages autonomes : il détecte la dérive
-entre deux copies d'un même champ.
+entre deux copies d'un même champ, en vérifiant la présence de l'étape `MAP_CIBLE`, l'envoi des
+lots en parallèle, l'identité des copies — arbre syntaxique comparé, commentaires exclus — et
+l'absence de redéfinition locale de la règle NA.
+
+La chaîne par champ, elle, n'a aucun test automatisé.
 
 ## 8. Ajouter un champ ou un endpoint
 
