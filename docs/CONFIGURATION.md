@@ -164,6 +164,30 @@ depuis son dossier `referentiel/`. L'option `--warm-start` commande son usage.
 Ajouter un couple consiste à déposer un YAML dans `{champ}/config/` : il est pris en compte par
 `--all` sans modification de code.
 
+### 3.4 Réglages propres à certains champs
+
+| Champ | Clés ajoutées au YAML du couple |
+|---|---|
+| `nomdonneurordre`, `beneficiaire` | `api_family` : `DGI` pour l'entité locale, `CLAUDE_WEB` pour l'entité étrangère — sélectionne la cascade. `columns.nif_nni` : colonne d'identifiant fiscal. Bloc `matching` : `strong_threshold` 92, `strong_gap` 8, `arbitrage_min` 70, `batch_size` 300. Bloc `llm` : modèle distant et taille des lots d'arbitrage |
+| `nature_economique` | `flux_type` : `FS` ou `FE`, sélectionne le référentiel. `model_embed` : **chemin absolu** du modèle de phrases installé sur le poste. `seuil_embed` 0,84 et `seuil_embed_court` 0,95 : seuils de l'étape sémantique. `tokens_par_ligne` 35 |
+| `pays` | `use_llm` : active ou non l'appel au modèle local en dernière étape |
+| `typeswift` | `flux_type` : `FS` ou `FE`, sélectionne la liste de codes de messages valides |
+
+Le champ `nature_economique` ne déclare pas de `referentiel_path` : son référentiel est choisi par
+`flux_type`, parmi les fichiers de son dossier `referentiel/`.
+
+### 3.5 Seuils des étapes de résolution
+
+Tous les seuils ne sont pas des réglages : certains sont des constantes de module, et leur
+modification demande une intervention dans le code.
+
+| Étape | Seuil | Où |
+|---|---|---|
+| 3. Rapprochement approché, champs de noms | `strong_threshold`, `strong_gap`, `arbitrage_min`, `batch_size` | YAML, dans les deux chaînes |
+| 3. Rapprochement approché, `Pays` | score minimum 93 | constante du module, dans les deux chaînes |
+| 4. Similarité sémantique | `seuil_embed`, `seuil_embed_court`, `model_embed` | YAML, chaîne par champ uniquement |
+| 5. Client de modèle | `llm.batch_size`, `llm.concurrency`, `llm.max_values_per_run`, `llm.web_search_max_uses` | YAML. `concurrency` et `max_values_per_run` n'existent que dans la chaîne par API |
+
 <a id="performance-dun-chargement-réglages-communs"></a>
 
 ## 4. Performance d'un chargement (réglages communs)

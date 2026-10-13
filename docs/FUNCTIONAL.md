@@ -29,15 +29,142 @@ flux **entrant** (E10), les rôles s'inversent. Le moteur de résolution suit l'
 du champ : rapprochement sur la base fiscale pour l'entité locale, résolution assistée avec
 recherche web pour l'entité étrangère.
 
-## 2. Principe de la cascade
+## 2. Les étapes de résolution
 
-Chaque champ catégoriel est résolu par une cascade d'étapes ordonnées, de la moins coûteuse à la
-plus coûteuse. La première étape qui tranche l'emporte, et la **méthode** qui a résolu la valeur
-est conservée dans les livrables : elle distingue ce qui était déjà connu de ce qui a été tranché
-pendant l'exécution.
+Les deux chaînes appliquent la **même escalade**, de l'étape la plus rapide et gratuite à la plus
+lente et coûteuse. La première étape qui tranche l'emporte, et la **méthode** qui a résolu la
+valeur est conservée dans les livrables : elle distingue ce qui était déjà connu de ce qui a été
+tranché pendant l'exécution.
 
-La cascade travaille sur les **valeurs distinctes** du champ, jamais ligne par ligne, puis le
-résultat est rediffusé sur les lignes.
+Toute la cascade travaille sur les **valeurs distinctes** du champ, jamais ligne par ligne, puis le
+résultat est rediffusé sur les lignes. Une valeur rencontrée mille fois est donc résolue une fois.
+
+### Étape 0 — Mémoire des valeurs validées
+
+Consultée avant tout le reste, elle court-circuite la cascade entière : résolutions déjà obtenues,
+et corrections métier déjà appliquées. Méthode `WARM`.
+
+Différence importante entre les deux chaînes : dans la chaîne par API la mémoire est **toujours**
+consultée ; dans la chaîne par champ elle ne l'est que si l'option `--warm-start` est passée. Sans
+cette option, toutes les valeurs repartent dans la cascade, y compris les résolutions déjà payées.
+
+### Étape 1 — Nettoyage basique
+
+Aucune décision métier, seulement la mise en forme de la valeur brute : normalisation Unicode,
+casse, accents, ponctuation et caractères de contrôle, espaces multiples, bruit de saisie connu,
+tokens parasites. Une fonction par champ — `clean_devise`, `clean_pays`, `clean_typeswift`,
+`clean_mode_reglement`, `clean_produits`, `clean_nomcorrespondant`, `nettoyer` pour
+`NatureEconomique`, `clean_label` pour les champs de noms.
+
+Deux sorties en découlent : la valeur nettoyée, conservée dans les livrables, et pour les noms une
+forme **hyper-normalisée** (`hyper_normaliser`) qui ne sert qu'à la correspondance exacte de
+l'étape suivante.
+
+Cette étape écarte déjà des valeurs : bruit connu, en-tête de colonne, montant, date, adresse,
+modalité vague — classés `NOISE` ou `OUTLIER` sans aller plus loin.
+
+### Étape 2 — Mapping direct
+
+Correspondance **exacte** avec une référence, donc sans aucune incertitude. Plusieurs formes :
+
+| Méthode | Correspondance exacte avec |
+|---|---|
+| `MAP` | une entrée du référentiel |
+| `MAP_CIBLE` | une valeur **cible** du référentiel — la valeur est déjà normalisée, comparaison insensible à la casse |
+| `ALIAS` | une variante connue d'une entrée (`Devise`, `ModeReglement`) |
+| `NUM` | un code numérique de devise |
+| `PREFIX` | un numéro seul complété en code de message valide (`TypeSwift`) |
+| `ADDR` | un mot-clé d'adresse désignant un pays |
+| `NIF_EXACT` | un identifiant fiscal valide présent tel quel dans la base fiscale |
+| `PUBLIC_ENT` | une entreprise publique de la liste de référence |
+
+S'y ajoute, pour les champs de noms, une **classification locale** du libellé par règles : personne
+physique (`PARTICULIER`), établissement personnel (`ETS_PERSONNEL`), établissement non
+identifiable (`ETS_OUTLIER`). Et pour `NatureEconomique`, une classification par **règles de
+mots-clés** sur le libellé nettoyé (`REGLE` dans la chaîne par champ).
+
+### Étape 3 — Rapprochement approché (rapidfuzz)
+
+Première étape à accepter une incertitude, donc la première à exiger des seuils. Elle n'appelle
+aucun modèle et reste gratuite. Deux usages :
+
+| Champ | Mécanisme | Seuils |
+|---|---|---|
+| `Pays` | `rapidfuzz.process.extractOne` contre les noms de pays du référentiel | score minimum 93, constante du module |
+| Champs de noms | `rapidfuzz.process.cdist` : meilleurs candidats de la base fiscale pour chaque libellé, par lots pour borner la mémoire, tous les cœurs mobilisés | score au moins 92 **et** écart au moins 8 avec le second candidat : correspondance nette (`DGI_FUZZY_STRONG`). Score sous 70 : aucun candidat plausible (`DGI_NO_MATCH`), sans appel au modèle. Entre les deux : arbitrage à l'étape 5 |
+
+L'exigence d'un **écart** avec le second candidat est le point déterminant : un score élevé ne
+suffit pas, la mesure produisant des scores hauts par accident sur des libellés courts. Deux
+raisons sociales proches sans écart franc ne sont donc jamais tranchées automatiquement.
+
+Les seuils des champs de noms sont des réglages du YAML ; celui de `Pays` est une constante du
+module.
+
+Cette étape est la plus longue d'un premier chargement — de l'ordre de 25 minutes pour quelques
+milliers de libellés nouveaux contre une base de quelque 52 000 raisons sociales. Ses résultats
+déterministes sont donc mémorisés à part, avec une empreinte du fichier fiscal.
+
+### Étape 4 — Similarité sémantique (transformers)
+
+**Chaîne par champ uniquement**, et pour le seul champ `NatureEconomique`. Les libellés du
+référentiel et les valeurs à résoudre sont encodés en vecteurs par un modèle de phrases
+(`sentence-transformers`, `mpnet-base-v2`, chargé depuis un chemin local), vecteurs normalisés,
+puis comparés par similarité cosinus. Le meilleur label est retenu au-delà d'un seuil : **0,84**
+en général, **0,95** pour les libellés courts, où une proximité de vecteurs est moins fiable.
+Méthode `EMBED`.
+
+Cette étape n'a pas été reprise dans la chaîne par API : `NatureEconomique` y passe directement du
+mapping direct au client de modèle, sur la liste fermée des labels. Cela évite d'héberger un modèle
+et ses dépendances d'apprentissage automatique.
+
+### Étape 5 — Client de modèle, dernière étape
+
+Appelée **en dernier**, uniquement sur les valeurs que rien n'a tranché : c'est la seule étape
+payante, et la seule qui dépende d'un service externe. Quatre usages distincts :
+
+| Usage | Champs | Ce qui est demandé au modèle |
+|---|---|---|
+| Liste fermée | `NatureEconomique`, `Produits` | choisir un label existant du référentiel, ou répondre `OUTLIER` — jamais un libellé inventé |
+| Identification bancaire | `NomCorrespondant` | identifier une banque réelle disposant d'un code SWIFT/BIC publié |
+| Arbitrage | noms, entité locale | trancher entre les candidats fiscaux proches laissés par l'étape 3 (`DGI_CLAUDE_ARBITRAGE`) |
+| Recherche web | noms, entité étrangère | identifier l'entité et son nom légal par recherche web réelle, nombre de recherches plafonné par valeur |
+
+Trois garde-fous encadrent cette étape :
+
+- **lots parallèles**, le temps d'un appel étant presque entièrement de l'attente réseau ;
+- **plafond de valeurs nouvelles** par exécution et par champ : au-delà, les valeurs restent
+  `OUTLIER`, ne sont pas mémorisées, et sont reproposées à l'exécution suivante ;
+- **mémorisation** de toute résolution obtenue, pour ne pas la repayer. Un **échec technique** ne
+  l'est jamais : la valeur est reproposée à l'exécution suivante.
+
+Le client diffère selon la chaîne : la chaîne par API appelle Claude pour tous les champs
+concernés ; la chaîne par champ appelle Claude pour les champs de noms, et un modèle **local** Qwen
+servi par Ollama pour `Pays` et `NatureEconomique` (méthode `LLM`).
+
+### Étape finale — Règle NA, puis `OUTLIER`
+
+La règle NA est appliquée après la cascade (voir §4). Ce qu'aucune étape n'a tranché devient
+`OUTLIER` et part en validation métier ; une fois validé, le résultat rejoint la mémoire de
+l'étape 0 et n'est plus retraité.
+
+### Quelles étapes pour quel champ
+
+| Champ | 1 nettoyage | 2 mapping direct | 3 rapidfuzz | 4 transformers | 5 modèle |
+|---|---|---|---|---|---|
+| Devise | oui | oui | — | — | — |
+| TypeSwift | oui | oui | — | — | — |
+| ModeReglement | oui | oui | — | — | — |
+| Pays | oui | oui | oui | — | oui |
+| NatureEconomique | oui | oui | — | chaîne par champ seulement | oui |
+| NomCorrespondant | oui | oui | — | — | oui |
+| Nom, entité locale | oui | oui | oui | — | oui, arbitrage |
+| Nom, entité étrangère | oui | oui | — | — | oui, recherche web |
+| Produits | oui | oui | — | — | oui |
+
+Trois champs sont **entièrement déterministes** — `Devise`, `TypeSwift`, `ModeReglement` : ils
+n'appellent jamais de modèle, et leur résultat est strictement reproductible.
+
+### Glossaire des méthodes
 
 | Méthode | Signification |
 |---|---|
@@ -54,101 +181,154 @@ résultat est rediffusé sur les lignes.
 | `NIF_EXACT` | identifiant fiscal valide trouvé tel quel dans la base fiscale |
 | `PUBLIC_ENT` | entreprise publique reconnue |
 | `PARTICULIER`, `ETS_PERSONNEL`, `ETS_OUTLIER` | classification locale d'un nom : personne physique, établissement personnel, établissement non identifiable |
+| `REGLE` | classification par règles de mots-clés |
 | `DGI_EXACT_NORM` | correspondance exacte après normalisation poussée contre la base fiscale |
 | `DGI_FUZZY_STRONG` | correspondance approchée nette : score élevé et écart franc avec le candidat suivant |
-| `DGI_CLAUDE_ARBITRAGE` | candidats fiscaux proches, tranchés par le modèle de langage |
+| `DGI_CLAUDE_ARBITRAGE` | candidats fiscaux proches, tranchés par le modèle |
 | `DGI_NO_MATCH` | aucun candidat plausible, aucun appel au modèle |
-| `CLAUDE` | résolution assistée : liste fermée, identification bancaire, ou recherche web |
-| `EMBED`, `REGLE`, `LLM` | chaîne par champ uniquement : embeddings locaux, règles de mots-clés, modèle local |
+| `EMBED` | similarité sémantique par embeddings — chaîne par champ |
+| `CLAUDE` | résolution par le client de modèle distant |
+| `LLM` | résolution par le modèle local — chaîne par champ |
 | `NA` | ligne sans activité légitime |
 | `OUTLIER` | non résolu, à soumettre à validation métier |
 
-Une résolution assistée est mémorisée pour ne pas être repayée. Un **échec technique** ne l'est
-jamais : la valeur est reproposée à l'exécution suivante.
-
 ## 3. Cascade, champ par champ
 
-### 3.1 Devise
+Chaque tableau donne la cascade **dans l'ordre d'exécution**, avec l'étape de l'escalade (§2) dont
+relève chaque test. La première ligne qui tranche l'emporte.
 
-Aucun appel à un modèle. Mémoire des valeurs validées, puis code ISO 4217 exact, puis code
-numérique, puis alias connu, puis nettoyage de repli, puis bruit connu, sinon `OUTLIER`. Seul
-champ présent sur les cinq endpoints.
+### 3.1 Devise — sortie : code ISO 4217 alpha-3
 
-### 3.2 TypeSwift
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire des valeurs validées |
+| 2 | — | 1 | nettoyage : espaces, suffixe `.0`, majuscules |
+| 3 | `NOISE` | 1 | bruit connu du référentiel |
+| 4 | `MAP` | 2 | code alpha-3 valide |
+| 5 | `NUM` | 2 | trois chiffres correspondant à un code numérique ISO |
+| 6 | `ALIAS` | 2 | variante connue d'un code |
+| 7 | `STRIP` | 1 | trois replis successifs : description entre parenthèses retirée, caractères non alphanumériques retirés, préfixe de trois lettres — chacun confronté aux codes valides puis aux alias |
+| 8 | `OUTLIER` | — | non identifié |
 
-Mémoire, puis bruit connu ou valeur ressemblant à un montant, puis code valide **du sens de
-flux** — la liste des codes dépend du flux, sortant ou entrant —, puis numéro seul à trois
-chiffres complété en code de message s'il est valide, sinon `OUTLIER`.
+Aucun appel à un modèle : résultat strictement reproductible. Seul champ présent sur les cinq
+endpoints.
 
-### 3.3 ModeReglement
+### 3.2 TypeSwift — sortie : code de message SWIFT
 
-Mémoire, puis entrée exacte du référentiel, puis alias, puis bruit connu, puis valeur nulle ou
-vide traitée explicitement, sinon `OUTLIER`.
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire, testée sur plusieurs formes de la valeur brute |
+| 2 | `NOISE` | 1 | bruit connu, ou valeur ressemblant à un montant |
+| 3 | `MAP` | 2 | code valide **du sens de flux** — la liste dépend du flux, sortant ou entrant |
+| 4 | `PREFIX` | 2 | numéro seul à trois chiffres, complété en code de message si le résultat est valide |
+| 5 | `OUTLIER` | — | non identifié |
 
-### 3.4 Pays
+### 3.3 ModeReglement — sortie : modalité validée
 
-Mémoire, puis normalisation Unicode, puis référentiel — construit en code à partir des
-bibliothèques de codes pays, et non d'un fichier métier —, puis mot-clé d'adresse, puis
-rapprochement approché, puis résolution assistée, sinon `OUTLIER`.
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire |
+| 2 | `NOISE` | 1 | bruit connu |
+| 3 | `MAP` | 2 | modalité valide du référentiel |
+| 4 | `ALIAS` | 2 | variante connue |
+| 5 | `OUTLIER` | — | non identifié |
 
-Particularité : `NA` est le code ISO de la Namibie. Une déclaration sans activité porte donc la
-valeur `NoAs` pour ce champ, et non `NA`.
+### 3.4 Pays — sortie : code ISO-2, ou `NoAs`
 
-### 3.5 NatureEconomique
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire |
+| 2 | — | 1 | nettoyage et normalisation Unicode |
+| 3 | `MAP` | 2 | référentiel — **construit en code** depuis les bibliothèques de codes pays, plus des alias manuels, et non depuis un fichier métier |
+| 4 | `ADDR` | 2 | mot-clé d'adresse désignant un pays |
+| 5 | `FUZZY` | 3 | rapprochement approché sur les noms de pays, score minimum 93 |
+| 6 | `CLAUDE` ou `LLM` | 5 | résolution par le client de modèle |
+| 7 | `NoAs` / `OUTLIER` | — | règle dédiée, voir §4 |
 
-1. Valeur vide : non résolue, traitée par la règle NA.
-2. Mémoire des valeurs validées, testée sur plusieurs formes de la valeur brute.
-3. En-tête, outlier évident — adresse, date, nom propre, nombre — ou modalité vague : `OUTLIER`.
-4. Label exact du référentiel ou mapping direct : `MAP`.
-5. Résolution assistée sur la **liste fermée** des labels du référentiel : le modèle choisit un
-   label existant ou répond `OUTLIER`, jamais un libellé inventé.
+Ce champ a sa **propre** règle de non-activité, et c'est le seul : voir §4.
 
-Le champ porte deux sorties : le label normalisé et sa **catégorie**, obtenue par consultation du
-référentiel.
+### 3.5 NatureEconomique — sorties : label normalisé **et** sa catégorie
 
-### 3.6 NomCorrespondant
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | — | — | valeur vide : non résolue, laissée à la règle NA |
+| 2 | `WARM` | 0 | mémoire, testée sur plusieurs formes de la valeur brute |
+| 3 | `NOISE` | 1 | en-tête de colonne, outlier évident — adresse, date, nom propre, nombre — ou modalité vague |
+| 4 | `MAP` | 2 | label exact du référentiel, ou mapping direct |
+| 5 | `REGLE` | 2 | classification par règles de mots-clés — chaîne par champ |
+| 6 | `EMBED` | 4 | similarité sémantique, seuil 0,84 ou 0,95 sur libellé court — chaîne par champ |
+| 7 | `CLAUDE` ou `LLM` | 5 | choix dans la **liste fermée** des labels : un label existant, ou `OUTLIER` — jamais un libellé inventé |
+| 8 | `OUTLIER` | — | non identifié |
 
-Mémoire, puis valeur déjà cible du référentiel, puis référentiel des banques validées, puis
-résolution assistée restreinte à l'identification d'une banque réelle disposant d'un code
-SWIFT/BIC publié, sinon `OUTLIER`.
+La catégorie du label est obtenue par consultation du référentiel, une fois le label retenu.
 
-### 3.7 Entité locale — NomDonneurOrdre sur E07 et E08, Beneficiaire sur E10
+### 3.6 NomCorrespondant — sortie : nom légal de la banque
 
-Cascade la plus longue, la seule qui mobilise la base fiscale :
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire |
+| 2 | `MAP_CIBLE` | 2 | la valeur est déjà un nom cible du référentiel |
+| 3 | `MAP` | 2 | entrée du référentiel des banques validées |
+| 4 | `CLAUDE` | 5 | identification d'une banque réelle disposant d'un code SWIFT/BIC publié |
+| 5 | `OUTLIER` | — | non identifié |
 
-1. Mémoire des valeurs validées.
-2. Valeur déjà cible du référentiel, puis référentiel des raisons sociales validées.
-3. Raccourci par la règle NA, puis entreprise publique reconnue, puis outlier évident.
-4. Identifiant fiscal valide trouvé tel quel dans la base fiscale.
-5. Classification locale du libellé : personne physique, établissement personnel, établissement
-   non identifiable.
-6. Rapprochement sur la base fiscale : correspondance exacte après normalisation poussée, puis
-   correspondance approchée nette — score élevé **et** écart franc avec le candidat suivant.
-7. Candidats proches sans écart franc : arbitrage par le modèle de langage.
-8. Aucun candidat plausible : `DGI_NO_MATCH`, sans aucun appel au modèle.
+### 3.7 Entité locale — sortie : raison sociale officielle en majuscules
 
-Les résolutions déterministes de l'étape 6 et les absences de correspondance de l'étape 8 sont
-mémorisées à part, avec une empreinte du fichier fiscal : l'exécution suivante ne refait pas le
-rapprochement. Une base fiscale modifiée change l'empreinte et déclenche un recalcul complet.
+`NomDonneurOrdre` sur E07 et E08, `Beneficiaire` sur E10. Cascade la plus longue, et la seule à
+mobiliser la base fiscale. Dans la chaîne par champ, elle est sélectionnée par
+`api_family: "DGI"`.
 
-Les seuils du rapprochement sont des réglages : score fort, écart minimal avec le second
-candidat, score plancher pour déclencher un arbitrage, taille des lots.
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire |
+| 2 | `MAP_CIBLE` | 2 | la valeur est déjà une raison sociale cible du référentiel |
+| 3 | `MAP` | 2 | entrée du référentiel des raisons sociales validées |
+| 4 | — | — | raccourci par la règle NA |
+| 5 | `PUBLIC_ENT` | 2 | entreprise publique de la liste de référence |
+| 6 | `NOISE` | 1 | outlier évident |
+| 7 | `NIF_EXACT` | 2 | identifiant fiscal valide présent tel quel dans la base fiscale |
+| 8 | `PARTICULIER`, `ETS_PERSONNEL`, `ETS_OUTLIER` | 2 | classification locale : personne physique, établissement personnel, établissement non identifiable |
+| 9 | `DGI_EXACT_NORM` | 2 | correspondance exacte après hyper-normalisation contre la base fiscale |
+| 10 | `DGI_FUZZY_STRONG` | 3 | correspondance approchée **nette** : score au moins 92 et écart au moins 8 avec le second candidat |
+| 11 | `DGI_CLAUDE_ARBITRAGE` | 5 | candidats proches sans écart franc : arbitrage par le modèle |
+| 12 | `DGI_NO_MATCH` | 3 | meilleur score sous 70 : aucun candidat plausible, aucun appel au modèle |
+| 13 | `OUTLIER` | — | non résolu |
 
-### 3.8 Entité étrangère — Beneficiaire sur E07 et E08, NomDonneurOrdre sur E10
+Les étapes 9, 10 et 12 sont déterministes et gratuites : leurs résultats sont mémorisés à part,
+avec une empreinte du fichier fiscal.
 
-La base fiscale nationale n'est pas pertinente. Mémoire, puis valeur déjà cible du référentiel,
-puis référentiel, puis raccourci par la règle NA, puis entreprise publique, puis outlier évident,
-puis classification locale du libellé, puis résolution assistée **avec recherche web réelle** pour
-identifier l'entité et son nom légal, sinon `OUTLIER`.
+### 3.8 Entité étrangère — sortie : nom légal en majuscules
 
-Seules les résolutions effectivement payées par une recherche web sont mémorisées. Le nombre de
-recherches par valeur est plafonné par un réglage.
+`Beneficiaire` sur E07 et E08, `NomDonneurOrdre` sur E10. La base fiscale nationale n'est pas
+pertinente. Dans la chaîne par champ, cette cascade est sélectionnée par
+`api_family: "CLAUDE_WEB"`.
 
-### 3.9 Produits
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire |
+| 2 | `MAP_CIBLE` | 2 | la valeur est déjà un nom cible du référentiel |
+| 3 | `MAP` | 2 | entrée du référentiel |
+| 4 | — | — | raccourci par la règle NA |
+| 5 | `PUBLIC_ENT` | 2 | entreprise publique de la liste de référence |
+| 6 | `NOISE` | 1 | outlier évident |
+| 7 | `PARTICULIER`, `ETS_PERSONNEL`, `ETS_OUTLIER` | 2 | classification locale du libellé |
+| 8 | `CLAUDE` | 5 | identification de l'entité et de son nom légal par **recherche web réelle**, nombre de recherches plafonné par valeur |
+| 9 | `OUTLIER` | — | non résolu |
 
-Mémoire, puis valeur déjà cible du référentiel, puis bruit connu, puis référentiel — construit
-depuis le fichier métier —, puis résolution assistée sur liste fermée, sinon `OUTLIER`. Champ
-propre à E08, absent de la chaîne par champ.
+Seules les résolutions effectivement payées par une recherche web sont mémorisées.
+
+### 3.9 Produits — sortie : libellé du référentiel métier
+
+| Ordre | Méthode | Étape | Ce qui est testé |
+|---|---|---|---|
+| 1 | `WARM` | 0 | mémoire |
+| 2 | `MAP_CIBLE` | 2 | la valeur est déjà un libellé cible du référentiel |
+| 3 | `NOISE` | 1 | bruit connu |
+| 4 | `MAP` | 2 | entrée du référentiel, construit depuis le fichier métier |
+| 5 | `CLAUDE` | 5 | choix dans la liste fermée des libellés |
+| 6 | `OUTLIER` | — | non identifié |
+
+Champ propre à E08, absent de la chaîne par champ.
 
 ## 4. Règle NA
 
@@ -161,20 +341,41 @@ champ == 'NA'  ET  témoin != 'NA'   -> OUTLIER
 champ vide, nul, ou non identifié   -> OUTLIER
 ```
 
-La règle est appliquée **en dernier**, après la cascade, et vectorisée. Elle n'est jamais
-redéfinie dans un package : un test de cohérence le vérifie.
+La règle est appliquée **en dernier**, après la cascade, et vectorisée. Une valeur nulle en base
+n'y échappe pas : elle est ramenée à une chaîne vide avant comparaison, et devient donc `OUTLIER`.
 
-Le témoin varie selon l'endpoint : la référence de transaction sur E07 et E10, le numéro de
-crédit documentaire sur E08 et E09, une colonne synthétique sur E11.
+Le témoin varie selon l'endpoint : la référence de transaction sur E07 et E10, le numéro de crédit
+documentaire sur E08 et E09, une colonne synthétique sur E11.
 
-**E11** — le témoin ne peut pas être une seule colonne. Une non-activité légitime se vérifie sur
-tout le gabarit à la fois : nom du correspondant, devise et numéro de compte tous à `NA` **et**
-les quatre montants à zéro. Le témoin est donc une colonne précalculée une seule fois pour tous
-les champs de l'endpoint. Un témoin partiel laissait deux champs décider indépendamment et se
-contredire.
+Cette règle est la **seule logique métier partagée** entre tous les packages : elle vit dans un
+module unique, et un test de cohérence vérifie qu'aucun package n'en redéfinit sa propre version.
+Un défaut de traitement des valeurs nulles n'a ainsi été corrigé qu'une fois pour les cinq
+endpoints.
 
-Une valeur nulle en base n'échappe pas à la règle : elle est ramenée à une chaîne vide avant
-comparaison, et devient donc `OUTLIER`.
+### E11 — témoin global
+
+Le témoin ne peut pas être une seule colonne. Une non-activité légitime se vérifie sur tout le
+gabarit à la fois : nom du correspondant, devise et numéro de compte tous à `NA` **et** les quatre
+montants à zéro. Le témoin est donc une colonne précalculée une seule fois pour tous les champs de
+l'endpoint. Un témoin partiel laissait deux champs décider indépendamment et se contredire.
+
+### Pays — la seule exception, et elle est inversée
+
+`NA` est le code ISO-2 de la **Namibie**. Pour ce champ, `NA` est donc une valeur de pays
+parfaitement légitime, ambiguë avec le témoin générique des autres champs. `Pays` a par conséquent
+sa propre règle, délibérément distincte de la règle partagée :
+
+```
+Pays vide ou nul  ET  témoin vide ou nul   ->  NoAs   (bruit pur, les deux vides)
+Pays == 'NA'      ET  témoin non vide      ->  'NA'   (Namibie, valeur légitime)
+Pays == 'NA'      ET  témoin vide          ->  NoAs
+valeur non reconnue comme un pays          ->  OUTLIER, quel que soit le témoin
+```
+
+La deuxième ligne est l'inverse de la règle générale : ailleurs, un `NA` avec un témoin non vide
+est une anomalie ; ici, c'est la Namibie. C'est aussi pour cela que la non-activité se déclare
+`NoAs` sur ce champ, et que les gabarits de messages sans activité d'E07 et E10 attendent `NoAs`
+dans la colonne `Pays`.
 
 ## 5. Valeur déjà conforme au référentiel
 

@@ -5,7 +5,7 @@ chaînes** de traitement : leur arborescence, leur orchestrateur, le contrat que
 ce qu'elles partagent et ce sur quoi elles divergent.
 
 Le principe, le périmètre et la nature des livrables sont décrits dans
-[ARCHITECTURE_PROJET.md](ARCHITECTURE_PROJET.md) ; les règles métier dans
+[ARCHITECTURE_PROJET.md](ARCHITECTURE_PROJET.pdf) ; les règles métier dans
 [FUNCTIONAL.md](FUNCTIONAL.md) ; les réglages dans [CONFIGURATION.md](CONFIGURATION.md).
 
 ## 1. Les deux dépôts
@@ -229,7 +229,50 @@ package. Un type ou un nom inconnu échoue au démarrage (`shared/config_validat
 Un échec laisse l'état inchangé : le delta est repris à l'exécution suivante. Une exécution sur
 fichier local est entièrement hors ligne — ni notification, ni dépôt distant, ni écriture d'état.
 
-## 4. Correspondance des modules entre les deux dépôts
+## 4. Où vit chaque étape de résolution
+
+Les deux chaînes appliquent la même escalade en cinq étapes, décrite dans
+[FUNCTIONAL.md](FUNCTIONAL.md) §2 : nettoyage basique, mapping direct, rapprochement approché,
+similarité sémantique, puis client de modèle en dernier recours. Voici où chacune est implémentée,
+dans l'un et l'autre dépôt.
+
+| Étape | Chaîne par champ | Chaîne par API |
+|---|---|---|
+| 0. Mémoire des valeurs validées | `{champ}/referentiel/validated_classif_*.json`, lue par `normalize_{champ}.py` — **seulement si `--warm-start`** | `{api}/referentiel/validated_classif_{champ}_{api}.json`, lue systématiquement par `{api}/fields/{champ}.py` |
+| 1. Nettoyage basique | fonctions `clean_*` et `nettoyer` de `normalize_{champ}.py` ; `clean_label` et `hyper_normaliser` pour les noms | mêmes fonctions dans `{api}/fields/{champ}.py` ; `clean_label` et `hyper_normaliser` dans `{api}/fields/_entity_matching.py` |
+| 2. Mapping direct | référentiels de `{champ}/referentiel/`, listes de mots-clés de `{champ}/keywords.py` | référentiels de `{api}/referentiel/`, listes de `{api}/fields/_keywords.py`, et `shared/referentiel_cibles.py` pour l'étape `MAP_CIBLE` |
+| 3. Rapprochement approché | `rapidfuzz` dans `nomdonneurordre/`, `beneficiaire/` et `pays/normalize_pays.py` | `rapidfuzz` dans `{api}/fields/_entity_matching.py` et `{api}/fields/pays.py` ; résultats déterministes mémorisés par `shared/dgi_cache.py` |
+| 4. Similarité sémantique | `sentence-transformers` dans `nature_economique/normalize_nature_economique.py` | **absente** — le champ passe du mapping direct au client de modèle |
+| 5. Client de modèle | `shared/claude_client.py` pour les noms, `shared/ollama_client.py` pour `NatureEconomique`, `ollama` appelé directement pour `Pays` — appels séquentiels | `shared/claude_client.py` pour tous les champs concernés, par lots parallèles via `shared/claude_batches.py` |
+| Règle NA | `apply_na_rule`, fonction de `shared/base_pipeline.py` | `shared/na_rule.py`, vectorisée |
+| Règle NA, exception `Pays` | règle dédiée dans `pays/normalize_pays.py` | règle dédiée dans `{api}/fields/pays.py` |
+
+`Pays` est la seule exception à la règle NA partagée : `NA` étant le code ISO de la Namibie,
+ce champ porte sa propre règle, de sens inverse, décrite dans [FUNCTIONAL.md](FUNCTIONAL.md) §4.
+
+Deux conséquences de structure :
+
+- la chaîne par champ dépend d'un **modèle installé localement**, désigné par un chemin absolu
+  dans la configuration (`model_embed: C:\models\mpnet-base-v2`) et d'un service Ollama en
+  fonctionnement. Ce sont deux prérequis attachés au poste, non portables en l'état ;
+- la chaîne par API n'héberge aucun modèle, mais son étape 5 dépend d'un service externe et
+  facturé. Les trois garde-fous — lots parallèles, plafond par exécution, mémorisation — sont
+  implémentés dans `shared/claude_batches.py` et dans la mémoire de chaque champ.
+
+### Points d'entrée
+
+| | Chaîne par champ | Chaîne par API |
+|---|---|---|
+| Traitement | `python {champ}/pipeline_{champ}.py` | `python -m {api}.run_pipeline` |
+| Options | `--config`, `--config-dir`, `--all`, `--workers`, `--input`, `--warm-start`, `--schedule` | `--config` (obligatoire), `--mode auto\|initial\|incremental`, `--input`, `--dry-run` |
+| Corrections métier | `python {champ}/apply_corrections.py --file <classeur>` — l'endpoint est déduit du nom de fichier | `python -m {api}.apply_corrections --file <classeur>` |
+| Reconstruction d'un référentiel | `python {champ}/build_referentiel.py` | `python -m {api}.build_referentiel` |
+| Extraction sur requête libre | — | `python -m {api}.ad_hoc_extraction --config <yaml> --query <sql>` (E07, E10, E11) |
+
+La différence de forme reflète la différence de structure : un champ est un script autonome dans
+son dossier, un endpoint est un package Python exécuté comme module.
+
+## 5. Correspondance des modules entre les deux dépôts
 
 | Champ | Colonne source | Chaîne par champ | Chaîne par API |
 |---|---|---|---|
@@ -246,7 +289,7 @@ fichier local est entièrement hors ligne — ni notification, ni dépôt distan
 `TypeSwfit` est l'orthographe réelle de la colonne dans le schéma source. `Produits` n'existe que
 dans la chaîne par API.
 
-## 5. Divergences assumées
+## 6. Divergences assumées
 
 | Sujet | Chaîne par champ | Chaîne par API |
 |---|---|---|
@@ -265,7 +308,7 @@ La mémoire `Devise` commune à toutes les APIs est un défaut de conception du 
 une valeur tranchée pour un endpoint s'applique à tous. La chaîne par API le corrige en isolant
 une mémoire par couple champ/API.
 
-## 6. Tests de la chaîne par API
+## 7. Tests de la chaîne par API
 
 51 fichiers, 450 tests, hors réseau : la base, le modèle de langage, la messagerie et le dépôt
 distant sont tous simulés. Quatre groupes :
@@ -284,7 +327,7 @@ distant sont tous simulés. Quatre groupes :
 Ce dernier groupe est la contrepartie du découpage en packages autonomes : il détecte la dérive
 entre deux copies d'un même champ.
 
-## 7. Ajouter un champ ou un endpoint
+## 8. Ajouter un champ ou un endpoint
 
 **Un champ dans la chaîne par champ** : créer `{champ}/normalize_{champ}.py` avec la cascade,
 `{champ}/pipeline_{champ}.py` qui hérite de `BasePipeline` et implémente les deux méthodes
@@ -302,7 +345,7 @@ obligatoires, un `config/{API}.yaml` par couple visé, et le référentiel dans
 
 Aucun endpoint existant n'est modifié par cette opération.
 
-## 8. Dépendances
+## 9. Dépendances
 
 | | Chaîne par champ | Chaîne par API |
 |---|---|---|
