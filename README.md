@@ -1,25 +1,37 @@
 # Data-Cleaning-PipelineAPI-BCMDG
 
-## Introduction
+Nettoyage et normalisation des données déclarées par les banques primaires, organisés **par
+endpoint**.
 
-Ce projet est le successeur, organisé **par API/endpoint**, de
-[`DataCleaning-PipelineField-BCMDG`](../DataCleaning-PipelineField-BCMDG) (organisé par champ).
-Chaque pipeline traite **tous les champs d'une API en un seul run** et produit un seul jeu de
-livrables, au lieu de faire tourner un champ (Devise, NomCorrespondant, ...) indépendamment
-sur toutes les APIs qui le contiennent.
+## Objet
 
-> **Portée actuelle : E11 — RDCC** (ticket BCMDG-172), **E09 — PE** (ticket BCMDG-223),
-> **E08 — OCD**, 6 champs (pas de ticket Jira dédié, porté directement depuis l'ancien repo
-> par-champ), **E07 — FS** (flux sortants) et **E10 — FE** (flux entrants) — 7 champs
-> catégoriels + validation des transactions chacun, voir *Champs traités — E07_FS* et
-> *Champs traités — E10_FE*. Ce README documente principalement E11 (le plus complet) ; E09 et E08 suivent
-> exactement la même approche (voir *Champs traités* ci-dessous et [e09_pe/](e09_pe/) /
-> [e08_ocd/](e08_ocd/)). E08 combine des champs déterministe+Claude (Devise, NomCorrespondant,
-> Produits), du matching contre la base fiscale DGI (NomDonneurOrdre), du Claude+recherche web
-> (Bénéficiaire) et un référentiel pycountry/babel/geonamescache (Pays) — voir *Champs traités —
-> E08_OCD* pour le détail de chacun. D'autres endpoints pourront être ajoutés
-> de la même façon — chacun son propre package `e0X_xxx/`, sans modifier ce qui existe déjà (voir
-> *Architecture* ci-dessous).
+Les banques primaires déclarent quotidiennement leurs opérations à la BCM à travers un ensemble
+d'APIs de déclaration, une par type d'état réglementaire. Les champs de ces déclarations sont
+saisis librement : une même devise, un même pays ou une même raison sociale y apparaissent sous
+des dizaines d'orthographes.
+
+Ce dépôt traite **tous les champs d'un endpoint en une seule exécution** et produit, pour chaque
+champ, une **mapping table** : la liste des valeurs uniques rencontrées, chacune associée à sa
+valeur propre. Les valeurs qu'aucune règle ne permet de rattacher sont isolées comme `OUTLIER` et
+soumises à validation métier ; une fois validées, elles rejoignent la mémoire du pipeline et ne
+sont plus à retraiter.
+
+Cinq endpoints sont traités, chacun dans son propre package :
+
+| Endpoint | Objet | Table source | Contenu |
+|---|---|---|---|
+| [E07_FS](e07_fs/README.md) | flux sortants | `E7EtatBcmFluxSortants` | 7 champs catégoriels, contrôle des transactions |
+| [E08_OCD](e08_ocd/README.md) | ouvertures de crédits documentaires | `E8EtatBcmOuvertureCreditDocumentaires` | 6 champs catégoriels |
+| [E09_PE](e09_pe/README.md) | prévisions d'échéances | `E9EtatBcmPrevisionEcheances` | 1 champ catégoriel, contrôle des échéances |
+| [E10_FE](e10_fe/README.md) | flux entrants | `E10EtatBcmFluxEntrants` | 7 champs catégoriels, contrôle des transactions |
+| [E11_RDCC](e11_rdcc/README.md) | relevés des comptes correspondants | `E11EtatBcmReleveDesComptesCorrespondants` | 2 champs catégoriels, cohérence des soldes |
+
+Le dépôt [`DataCleaning-PipelineField-BCMDG`](../DataCleaning-PipelineField-BCMDG) traite les mêmes
+données selon l'autre axe : un champ à la fois, sur toutes les APIs où il existe. Les deux chaînes
+appliquent les mêmes règles métier ; leur comparaison figure dans
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Les tables source sont lues en **lecture seule stricte** : aucune écriture, aucun DDL.
 
 ---
 
@@ -27,362 +39,316 @@ sur toutes les APIs qui le contiennent.
 
 ```
 DataCleaning-PipelineAPI-BCMDG/
-├── shared/            Infrastructure générique, réutilisable par toute future API (connexion DB
-│                       lecture seule, état incrémental, email, SharePoint, écriture Excel/CSV,
-│                       rapports PDF, validation de config, orchestrateur BaseApiPipeline)
-├── e11_rdcc/           Package auto-contenu de l'API E11 — champs, référentiels, config, CLI
-│   ├── fields/         Devise, NomCorrespondant (catégoriels) + cohérence numérique (4 règles)
-│   ├── referentiel/    Référentiels + caches warm-start, propres à E11
-│   ├── config/E11_RDCC.yaml
-│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, ad_hoc_extraction.py, reports.py
-│   └── outputs/        Sorties locales (gitignored)
-├── e09_pe/             Package auto-contenu de l'API E09 — même structure qu'e11_rdcc/, en
-│   │                    plus simple (1 champ catégoriel + 2 règles de validation)
-│   ├── fields/         Devise (catégoriel) + Echeances (MontantEcheance/DateEcheance, 2 règles)
-│   ├── referentiel/    Référentiels + caches warm-start, propres à E09
-│   ├── config/E09_PE.yaml
-│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, reports.py
-│   └── outputs/        Sorties locales (gitignored)
-├── e08_ocd/            Package auto-contenu de l'API E08 — 6 champs catégoriels
-│   ├── fields/         Devise, NomCorrespondant (portés) + Produits (nouveau) — déterministe/
-│   │                    référentiel + fallback Claude ; NomDonneurOrdre (matching base fiscale
-│   │                    DGI + rapidfuzz + arbitrage Claude) + Beneficiaire (mêmes helpers,
-│   │                    fallback Claude + recherche web) partagent _entity_matching.py ; Pays
-│   │                    (pycountry/babel/geonamescache + fallback Claude, ex-Ollama)
-│   ├── referentiel/    Référentiels + caches warm-start, propres à E08 (dont des caches
-│   │                    NomCorrespondant/NomDonneurOrdre/Pays repris tel quels de l'ancien repo)
-│   ├── config/E08_OCD.yaml
-│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, reports.py
-│   └── outputs/        Sorties locales (gitignored)
-├── e07_fs/            Package auto-contenu de l'API E07 (Flux Sortants) — 7 champs
-│   ├── fields/         catégoriels (TypeSwift, ModeReglement, NatureEconomique + portages
-│   │                    d'E08 : Devise, NomDonneurOrdre, Beneficiaire, Pays) et le moteur
-│   │                    de validation transactions.py (montant, taux, date, sans activité)
-│   ├── referentiel/    Référentiels + caches warm-start repris de l'ancien repo
+├── shared/             Socle générique, sans logique métier de champ : connexion en lecture
+│                        seule, état incrémental, règles transverses, client de modèle,
+│                        écriture Excel/CSV, rapports PDF, notification, dépôt distant,
+│                        validation de configuration, orchestrateur BaseApiPipeline
+├── e07_fs/             Package autonome de l'endpoint E07 — flux sortants
+│   ├── fields/         TypeSwift, ModeReglement, Devise, NomDonneurOrdre, Beneficiaire,
+│   │                    NatureEconomique, Pays, et transactions.py (montant, taux, date,
+│   │                    conformité des messages sans activité)
+│   ├── referentiel/    Référentiels métier et mémoires de valeurs validées, propres à E07
 │   ├── config/E07_FS.yaml
 │   ├── pipeline.py, run_pipeline.py, apply_corrections.py, ad_hoc_extraction.py, reports.py
-│   └── outputs/        Sorties locales (gitignored)
-├── e10_fe/            Package auto-contenu de l'API E10 (Flux Entrants) — même structure
-│   ├── fields/         qu'e07_fs/, entités inversées : NomDonneurOrdre étranger (Claude +
-│   │                    recherche web), Beneficiaire local (matching base fiscale DGI)
-│   ├── referentiel/    Référentiels + caches FE/E10 repris de l'ancien repo
-│   ├── config/E10_FE.yaml
-│   ├── pipeline.py, run_pipeline.py, apply_corrections.py, ad_hoc_extraction.py, reports.py
-│   └── outputs/        Sorties locales (gitignored)
-├── req/                Fichiers de référence externes (base fiscale DGI, entreprises publiques)
-│   │                    — gitignored, chemins pilotés par .env (DGI_BASE_PATH/PUBLIC_ENT_PATH)
-├── state/              État incrémental local, un fichier JSON par API (gitignored)
-├── scripts/            run_pipeline.ps1 (cible Task Scheduler), seed_state.py
-├── docs/               ARCHITECTURE.md, FUNCTIONAL.md, CONFIGURATION.md
-└── tests/
+│   └── outputs/        Sorties locales (non versionnées)
+├── e08_ocd/            Package autonome de l'endpoint E08 — même structure
+│   ├── fields/         Devise, NomCorrespondant, Produits, Pays, et NomDonneurOrdre /
+│   │                    Beneficiaire qui partagent _entity_matching.py (rapprochement
+│   │                    contre la base fiscale)
+│   └── ...
+├── e09_pe/             Package autonome de l'endpoint E09 — le plus simple
+│   ├── fields/         Devise, et echeances.py (montant, date d'échéance)
+│   └── ...
+├── e10_fe/             Package autonome de l'endpoint E10 — structure d'E07, entités
+│   ├── fields/         inversées : donneur d'ordre étranger, bénéficiaire local
+│   └── ...
+├── e11_rdcc/           Package autonome de l'endpoint E11
+│   ├── fields/         Devise, NomCorrespondant, et numeric_coherence.py (4 règles,
+│   │                    dont un chaînage J / J+1)
+│   ├── global_na.py    Témoin de non-activité global, propre à E11
+│   └── ...
+├── req/                Fichiers de référence externes : base fiscale, entreprises publiques
+│                        — non versionnés, chemins pilotés par .env
+├── state/              État incrémental local, un fichier JSON par endpoint (non versionné)
+├── scripts/            run_pipeline.ps1 (cible de l'ordonnanceur), seed_state.py
+└── docs/               ARCHITECTURE_PROJET.md, ARCHITECTURE.md, FUNCTIONAL.md, CONFIGURATION.md
 ```
 
-**Principe central** : une future API ne réutilise **que** `shared/` — elle a son propre
-`fields/`, ses propres référentiels, sa propre config, indépendants des autres packages d'API.
-Aucun couplage entre packages d'API, pour qu'une API ne casse jamais en modifiant une autre. Voir
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (section "Décision H") pour le raisonnement complet
-— `e09_pe/` est la première application concrète de ce principe : construit en copiant la forme
-d'`e11_rdcc/` puis en divergeant librement (pas de règle de cohérence J/J+1, pas de gabarit "sans
-activité", témoin NA simple au lieu de la colonne globale — rien de tout ça n'était demandé pour
-E09).
+**Principe central** : un package d'endpoint ne réutilise **que** `shared/`. Il a son propre
+`fields/`, ses propres référentiels et sa propre configuration, indépendants des autres packages.
+Ajouter un endpoint ne modifie donc aucun endpoint existant, et un endpoint peut porter une règle
+particulière sans négociation avec les autres. La contrepartie — les champs communs à plusieurs
+endpoints sont des copies — et la façon dont elle est surveillée sont décrites dans
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**Documentation de référence :**
+
+| Document | Contenu |
+|---|---|
+| [docs/ARCHITECTURE_PROJET.md](docs/ARCHITECTURE_PROJET.md) | Nature du projet, périmètre, mapping tables, les deux chaînes de traitement |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Structure et organisation du code des deux chaînes, contrats, points d'extension |
+| [docs/FUNCTIONAL.md](docs/FUNCTIONAL.md) | Règles métier : les cinq étapes de résolution, la cascade de chaque champ, les contrôles |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Variables d'environnement et clés de configuration |
+| `{endpoint}/README.md` | Champs, règles, livrables, réglages et coûts de l'endpoint |
 
 ---
 
-## Champs traités — E11_RDCC
+## Champs traités
+
+Le détail de chaque cascade figure dans [docs/FUNCTIONAL.md](docs/FUNCTIONAL.md) et dans le README
+de chaque package.
+
+### E07_FS — flux sortants
 
 | Champ | Type | Traitement |
 |---|---|---|
-| `NomCorrespondant` | catégoriel | Référentiel BCM validé → fallback API Claude |
-| `Devise` | catégoriel | Référentiel ISO 4217 (règles pures, pas de LLM) |
-| Soldes/dates (`SoldeDebutJournee`, `TotalMvtsDebiteursJournee`, `TotalMvtsCrediteurs`, `SoldeFinJournee`, `DateFinJournee`) | cohérence numérique | 4 règles de cohérence (voir [docs/FUNCTIONAL.md](docs/FUNCTIONAL.md)) — pas de "valeur normalisée", un rapport d'anomalies |
+| `TypeSwfit` | catégoriel | Codes de messages valides du flux sortant ; numéro seul complété en code de message ; bruit et montants écartés |
+| `ModeReglement` | catégoriel | Modalités validées et leurs variantes connues |
+| `Devise` | catégoriel | Référentiel ISO 4217, cascade entièrement déterministe |
+| `NomDonneurOrdre` | catégoriel | Entité locale : identifiant fiscal exact, entreprises publiques, classification locale, rapprochement sur la base fiscale, arbitrage entre candidats proches |
+| `Beneficiaire` | catégoriel | Entité étrangère : référentiel, classification locale, puis identification par recherche web |
+| `NatureEconomique` | catégoriel | Référentiel du flux sortant (14 catégories, 78 labels), mapping direct, pré-filtre des outliers évidents, puis choix dans la liste fermée des labels |
+| `Pays` | catégoriel | Référentiel construit en code, mots-clés d'adresse, rapprochement approché, puis résolution assistée. Règle `NoAs` spécifique |
+| `MontantTransaction`, `TauxDeChange`, `DateTransaction` | contrôle | Montant et taux positifs ou nuls, date antérieure à la date de création, conformité du gabarit des messages sans activité |
 
-La règle NA commune aux champs catégoriels utilise `NumCompte` comme colonne témoin (voir
-[docs/FUNCTIONAL.md](docs/FUNCTIONAL.md)).
+`ReferenceTransaction` n'est pas normalisée : c'est le témoin de la règle NA de chaque champ
+catégoriel, et le discriminant des messages sans activité. `SourceDevise` et `Produit` ne sont pas
+normalisés, mais sont contrôlés par le gabarit des messages sans activité. Le champ « banque »
+correspond à `RefBanque`.
 
-## Champs traités — E09_PE
+Historique borné aux lignes créées depuis le 01/01/2024 (`load.initial_since`), comme E09 et E10.
 
-| Champ | Type | Traitement |
-|---|---|---|
-| `Devise` | catégoriel | Référentiel ISO 4217 (identique à E11 — mêmes règles pures, pas de LLM) |
-| `MontantEcheance`, `DateEcheance` | validation numérique/date | 2 règles indépendantes, ligne à ligne (pas de cohérence inter-lignes) : `AMOUNT_POSITIVE` (montant > 0) et `DATE_VALIDITY` (date d'échéance strictement postérieure à `dtCr`) — voir [e09_pe/fields/echeances.py](e09_pe/fields/echeances.py) |
-
-`NumCredoc` (référence du Crédit Documentaire) n'est pas normalisé — colonne témoin de la règle
-NA de Devise et identifiant conservé dans `Anomalies_Echeances`, comme `NumCompte` pour E11.
-
-```bash
-python -m e09_pe.run_pipeline --config e09_pe/config/E09_PE.yaml --input tests/fixtures/e09_pe_sample.csv
-```
-
-Toutes les commandes de la section *Utilisation* ci-dessous existent aussi pour E09
-(`python -m e09_pe.run_pipeline`, `python -m e09_pe.apply_corrections`, mêmes options).
-
-## Champs traités — E08_OCD
+### E08_OCD — ouvertures de crédits documentaires
 
 | Champ | Type | Traitement |
 |---|---|---|
-| `Devise` | catégoriel | Référentiel ISO 4217 (identique à E11/E09) |
-| `NomCorrespondant` | catégoriel | Référentiel BCM validé → fallback API Claude (identique à E11 ; cache warm-start repris de l'ancien repo, déjà "chaud") |
-| `Produits` | catégoriel | Référentiel construit depuis `req/DataCleaning_E08 OCD_Produits.xlsx` (catégories + alias déjà connus + bruit connu) → fallback API Claude sur liste FERMÉE de labels valides (`shared/claude_client.py::call_claude_match_batch` — Claude choisit dans la liste ou répond OUTLIER, jamais un libellé inventé) — voir [e08_ocd/fields/produits.py](e08_ocd/fields/produits.py) |
-| `NomDonneurOrdre` | catégoriel | NIF exact (base fiscale DGI, ~52k raisons sociales) → entreprise publique connue → classification locale (particulier/ETS) → matching flou DGI (rapidfuzz, exact/fort/arbitrage Claude/aucun match) — voir [e08_ocd/fields/nomdonneurordre.py](e08_ocd/fields/nomdonneurordre.py) |
-| `Beneficiaire` | catégoriel | Bénéficiaire ÉTRANGER (import) : mêmes helpers de nettoyage/classification que NomDonneurOrdre (`e08_ocd/fields/_entity_matching.py`) mais pas de base DGI pertinente → fallback Claude + recherche web réelle — voir [e08_ocd/fields/beneficiaire.py](e08_ocd/fields/beneficiaire.py) |
-| `Pays` | catégoriel | Référentiel pycountry/babel/geonamescache + alias manuels + mots-clés d'adresse → fallback Claude sur liste fermée des codes ISO-2 (remplace Ollama/qwen2.5 de l'ancien repo — décision confirmée, pas d'infra locale à héberger) — voir [e08_ocd/fields/pays.py](e08_ocd/fields/pays.py) |
+| `Devise` | catégoriel | Référentiel ISO 4217, cascade entièrement déterministe |
+| `NomCorrespondant` | catégoriel | Référentiel des banques validées, puis identification d'une banque disposant d'un code SWIFT/BIC publié |
+| `Produits` | catégoriel | Référentiel construit depuis le fichier métier, puis choix dans la liste fermée des libellés valides |
+| `NomDonneurOrdre` | catégoriel | Entité locale : rapprochement sur la base fiscale, environ 52 000 raisons sociales |
+| `Beneficiaire` | catégoriel | Entité étrangère : identification par recherche web |
+| `Pays` | catégoriel | Référentiel construit en code, mots-clés d'adresse, rapprochement approché, puis résolution assistée |
 
-`NumCredoc` (référence du Crédit Documentaire) n'est pas normalisé — colonne témoin de la règle
-NA de chaque champ catégoriel (chacun indépendamment, comme dans l'ancien repo — pas de correctif
-"NA globale" comme pour E11, aucun gabarit "sans activité" multi-champs documenté pour E08).
+`NumCredoc` n'est pas normalisé : c'est le témoin de la règle NA de chaque champ catégoriel,
+appliqué indépendamment champ par champ.
 
-`NomDonneurOrdre` et `Beneficiaire` nécessitent `DGI_BASE_PATH`/`PUBLIC_ENT_PATH` dans `.env`
-(fichiers externes non versionnés, voir `.env.example`) et la dépendance `rapidfuzz`. `Pays`
-nécessite `pycountry`/`babel`/`geonamescache`. `Beneficiaire` utilise l'outil serveur Claude
-`web_search` (facturé à l'usage, `llm.web_search_max_uses` dans le YAML, défaut 3/valeur).
+`NomDonneurOrdre` et `Beneficiaire` exigent `DGI_BASE_PATH` et `PUBLIC_ENT_PATH` dans `.env`
+(fichiers externes non versionnés). `Beneficiaire` recourt à la recherche web, facturée à l'usage
+et plafonnée par `llm.web_search_max_uses`.
 
-```bash
-python -m e08_ocd.run_pipeline --config e08_ocd/config/E08_OCD.yaml --input tests/fixtures/e08_ocd_sample.csv
-```
-
-Toutes les commandes de la section *Utilisation* ci-dessous existent aussi pour E08
-(`python -m e08_ocd.run_pipeline`, `python -m e08_ocd.apply_corrections`, mêmes options).
-
-## Champs traités — E07_FS
-
-Table `E7EtatBcmFluxSortants`. Le champ « banque » du ticket correspond à `RefBanque`.
+### E09_PE — prévisions d'échéances
 
 | Champ | Type | Traitement |
 |---|---|---|
-| `TypeSwfit` | catégoriel | Codes SWIFT valides des Flux Sortants (`valid_fs`), comparés sans espaces ; numéro seul (« 103 ») → `MT 103` ; bruit/montant → OUTLIER — voir [e07_fs/fields/typeswift.py](e07_fs/fields/typeswift.py) |
-| `ModeReglement` | catégoriel | Codes CD/RD/TL + alias (TR → TL) + bruit connu |
-| `Devise` | catégoriel | Référentiel ISO 4217 (identique à E08) |
-| `NomDonneurOrdre` | catégoriel | Identique à E08 (NIF exact DGI via `NifNni`, entreprises publiques, matching flou, arbitrage Claude) |
-| `Beneficiaire` | catégoriel | Identique à E08 (Claude + recherche web) |
-| `NatureEconomique` | catégoriel | Référentiel Flux Sortants de l'ancien repo (14 catégories, 78 labels) + mapping direct + pré-filtre des outliers évidents → API Claude sur liste FERMÉE de labels (remplace l'embedding mpnet de l'ancien repo) — voir [e07_fs/fields/nature_economique.py](e07_fs/fields/nature_economique.py) |
-| `Pays` | catégoriel | Identique à E08 (règle NoAs spécifique) |
-| `MontantTransaction`, `TauxDeChange`, `DateTransaction` | validation | Montant ≥ 0, taux ≥ 0, date parsable et antérieure à `dtCr` (au jour), conformité du gabarit « sans activité » → onglet `Anomalies_Transactions` — voir [e07_fs/fields/transactions.py](e07_fs/fields/transactions.py) |
+| `Devise` | catégoriel | Référentiel ISO 4217, identique aux autres endpoints |
+| `MontantEcheance`, `DateEcheance` | contrôle | Deux règles indépendantes, ligne à ligne : montant strictement positif, et date d'échéance strictement postérieure à la date de création |
 
-`ReferenceTransaction` n'est pas normalisée : c'est le témoin NA de chaque champ catégoriel et
-le discriminant des messages « sans activité » (référence = `NA`). `SourceDevise` (décision
-métier) et `Produit` (hors périmètre pour l'instant) ne sont pas normalisés, mais sont contrôlés
-par le gabarit « sans activité ».
+`NumCredoc` n'est pas normalisé : témoin de la règle NA, et identifiant conservé dans la feuille
+d'anomalies.
 
-Historique limité aux lignes créées depuis le 01/01/2024 (`load.initial_since`, filtre
-`dtCr >= 2024-01-01`, comme E09). NomDonneurOrdre et Beneficiaire résolvent directement un
-libellé déjà égal à un nom légal du référentiel (méthode `MAP_CIBLE`, reprise de l'ancien repo).
+### E10_FE — flux entrants
 
-```bash
-python -m e07_fs.run_pipeline --config e07_fs/config/E07_FS.yaml --input tests/fixtures/e07_fs_sample.csv
-```
-
-## Champs traités — E10_FE
-
-Table `E10EtatBcmFluxEntrants`. Même approche qu'E07, avec les données FE/E10 de l'ancien repo
-et les entités inversées (flux entrants) :
+Même approche qu'E07, les rôles des entités s'inversant sur un flux entrant :
 
 | Champ | Type | Traitement |
 |---|---|---|
-| `TypeSwfit` | catégoriel | Codes SWIFT valides des Flux Entrants (`valid_fe`, pacs.004 inclus) |
-| `ModeReglement` | catégoriel | Identique à E07 |
-| `Devise` | catégoriel | Référentiel ISO 4217 |
-| `NomDonneurOrdre` | catégoriel | Émetteur ÉTRANGER : référentiel E10 + `MAP_CIBLE` + classification locale → Claude + recherche web — voir [e10_fe/fields/nomdonneurordre.py](e10_fe/fields/nomdonneurordre.py) |
-| `Beneficiaire` | catégoriel | Bénéficiaire LOCAL : référentiel E10 + `MAP_CIBLE` → NIF exact (`NifNni`) → entreprises publiques → matching flou DGI + arbitrage Claude — voir [e10_fe/fields/beneficiaire.py](e10_fe/fields/beneficiaire.py) |
-| `NatureEconomique` | catégoriel | Référentiel Flux Entrants (78 labels) + mapping direct FE → Claude sur liste fermée |
-| `Pays` | catégoriel | Identique à E07 (cache FE) |
-| `MontantTransaction`, `TauxDeChange`, `DateTransaction` | validation | Mêmes 4 règles qu'E07 → onglet `Anomalies_Transactions` |
+| `TypeSwfit` | catégoriel | Codes de messages valides du flux entrant |
+| `ModeReglement`, `Devise`, `Pays` | catégoriel | Identiques à E07 |
+| `NomDonneurOrdre` | catégoriel | Émetteur **étranger** : référentiel, classification locale, puis identification par recherche web |
+| `Beneficiaire` | catégoriel | Bénéficiaire **local** : identifiant fiscal exact, entreprises publiques, rapprochement sur la base fiscale, arbitrage entre candidats proches |
+| `NatureEconomique` | catégoriel | Référentiel du flux entrant (78 labels), mapping direct, puis liste fermée |
+| `MontantTransaction`, `TauxDeChange`, `DateTransaction` | contrôle | Mêmes quatre règles qu'E07 |
 
-La table E10 n'a **pas de colonne `SourceDevise`** (contrairement au ticket) : elle est absente
-du gabarit « sans activité ». Historique limité aux lignes créées depuis le 01/01/2024.
+La table E10 ne porte pas de colonne `SourceDevise` : elle est absente du gabarit des messages sans
+activité.
 
-```bash
-python -m e10_fe.run_pipeline --config e10_fe/config/E10_FE.yaml --input tests/fixtures/e10_fe_sample.csv
-```
+### E11_RDCC — relevés des comptes correspondants
+
+| Champ | Type | Traitement |
+|---|---|---|
+| `NomCorrespondant` | catégoriel | Référentiel des banques validées, puis identification d'une banque disposant d'un code SWIFT/BIC publié |
+| `Devise` | catégoriel | Référentiel ISO 4217, cascade entièrement déterministe |
+| Soldes et dates de relevé | cohérence numérique | 4 règles, dont un chaînage J / J+1 entre lignes. Pas de valeur normalisée : un rapport d'anomalies |
+
+La règle NA des champs catégoriels s'appuie ici sur un **témoin global** : une colonne précalculée
+qui ne vaut `NA` que si tout le gabarit de non-activité est respecté à la fois — nom du
+correspondant, devise et numéro de compte tous à `NA`, et les quatre montants à zéro.
 
 ---
 
 ## Installation
 
 **Prérequis :**
-- Python 3.10+
-- Accès réseau à la base SQL Server BCM (lecture seule uniquement)
-- Une clé API Anthropic (`ANTHROPIC_API_KEY`) pour le fallback Claude de `NomCorrespondant`
-- (Optionnel) Credentials SharePoint (Microsoft Graph) et SMTP Gmail pour les notifications
+
+- Python 3.10 ou plus récent
+- Accès réseau à la base de collecte, en lecture seule
+- Une clé d'API Anthropic (`ANTHROPIC_API_KEY`) pour la dernière étape de résolution des champs
+  qui la prévoient
+- Facultatif : accès au dépôt distant (Microsoft Graph) et compte SMTP pour les notifications
 
 ```bash
 git clone <url> DataCleaning-PipelineAPI-BCMDG
 cd DataCleaning-PipelineAPI-BCMDG
 python -m venv .venv
-.venv\Scripts\pip install -r requirements-dev.txt   # ou requirements.txt seul, sans les tests
+.venv\Scripts\pip install -r requirements.txt
 copy .env.example .env
-# Renseigner .env
 ```
+
+Renseigner ensuite `.env` : voir [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ---
 
 ## Utilisation
 
-> Toutes les commandes sont à lancer depuis la racine du repo.
+Toutes les commandes se lancent depuis la racine du dépôt. Les exemples portent sur E11 ;
+remplacer `e11_rdcc` et `E11_RDCC` par l'endpoint visé — `e07_fs`, `e08_ocd`, `e09_pe`, `e10_fe`
+ou `e11_rdcc`. Les options sont identiques pour les cinq.
 
-### Run local (fichier CSV/Excel — 100% offline, aucun SharePoint/email/état)
+### Premier chargement
 
-```bash
-python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --input tests/fixtures/e11_rdcc_sample.csv
-```
-
-### Initial Load (historique complet, à lancer une fois avant d'activer le job hebdomadaire)
+À lancer une fois par endpoint, avant d'activer l'ordonnancement : il amorce l'état incrémental.
 
 ```bash
 python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode initial
 ```
 
-### Incremental Load (delta uniquement — mode utilisé par le job hebdomadaire)
+### Chargement du delta
+
+Mode utilisé par l'ordonnanceur : seules les lignes créées depuis la dernière exécution réussie
+sont traitées.
 
 ```bash
 python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode incremental
 ```
 
-### Dry-run (charge/traite normalement mais n'envoie ni SharePoint ni email)
+### Exécution sur un fichier local
+
+Entièrement hors ligne : ni dépôt distant, ni notification, ni écriture d'état.
+
+```bash
+python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --input data/extrait.csv
+```
+
+### Exécution à blanc
+
+Charge et traite normalement, mais ne dépose rien et ne notifie personne.
 
 ```bash
 python -m e11_rdcc.run_pipeline --config e11_rdcc/config/E11_RDCC.yaml --mode initial --dry-run
 ```
 
-### Corrections manuelles (apply_corrections.py)
+### Corrections métier
 
-Les valeurs à valider sont les lignes `OUTLIER` des onglets de classification du classeur
-(`E11_RDCC_classification.xlsx`), également détaillées par champ dans le rapport PDF. L'équipe
-métier prépare un fichier Excel comportant un onglet **Instructions** à 3 colonnes — `Champ`,
-`Input` (la valeur brute), `Label_Attendu` (le nom légal correct, ou `OUTLIER`) — puis :
+Les valeurs à valider sont les lignes `OUTLIER` des feuilles de classification du classeur, également
+détaillées par champ dans le rapport PDF. L'équipe métier prépare un classeur comportant un onglet
+**Instructions** à trois colonnes — `Champ`, `Input` (la valeur brute), `Label_Attendu` (la valeur
+correcte, ou `OUTLIER`) — puis :
 
 ```bash
 python -m e11_rdcc.apply_corrections --file "corrections_a_appliquer.xlsx"
 ```
 
-met à jour le cache warm-start du champ concerné (déduit de la colonne `Champ`) — la correction
-prime dès le run suivant, sans jamais retoucher le fichier Excel source.
+La correction rejoint la mémoire des valeurs validées du champ désigné par la colonne `Champ`, et
+prime dès l'exécution suivante, sans jamais retoucher le classeur source.
 
-**Traçabilité** : chaque correction appliquée est journalisée dans l'historique propre à l'API
-(`{api}/referentiel/corrections_history_{api_id}.json`, un fichier par API, jamais partagé). Cet
-historique est reproduit en **lecture seule** dans l'onglet `Instructions` du classeur produit au
-run suivant (`Champ`, `Input`, `Label_Attendu` — la date reste tracée dans le JSON d'historique,
-mais n'est pas affichée) : **vide au tout premier run**, puis
-enrichi au fil des validations métier. Rejouer deux fois la même correction ne crée pas de
-doublon ; corriger différemment une valeur déjà corrigée laisse bien les deux entrées.
+**Traçabilité** : chaque correction appliquée est journalisée dans l'historique propre à
+l'endpoint (`{endpoint}/referentiel/corrections_history_{api_id}.json`). Cet historique est
+reproduit en **lecture seule** dans l'onglet `Instructions` du classeur produit à l'exécution
+suivante : vide à la première exécution, puis enrichi au fil des validations. Rejouer deux fois la
+même correction ne crée pas de doublon ; corriger différemment une valeur déjà corrigée conserve
+les deux entrées.
 
-### Extraction ad hoc (requête SQL personnalisée)
+### Extraction sur requête libre
 
-Outil indépendant du run automatisé — un analyste fournit sa propre requête, table, ou fichier
-local ; le nettoyage normal s'applique à tout champ configuré dont la colonne est présente dans
-le résultat (les autres sont ignorés sans erreur). Produit une extraction locale (colonnes de la
-requête + leurs versions nettoyées insérées juste après), sans toucher SharePoint/email/état :
+Outil indépendant de l'exécution automatisée : un analyste fournit sa propre requête, une table,
+ou un fichier local. Le nettoyage normal s'applique à tout champ configuré dont la colonne source
+est présente dans le résultat, les autres étant ignorés sans erreur. Produit une extraction locale
+— colonnes de la requête, et leurs versions nettoyées insérées juste après — sans toucher au dépôt
+distant, à la notification ni à l'état.
 
 ```bash
 python -m e11_rdcc.ad_hoc_extraction --config e11_rdcc/config/E11_RDCC.yaml \
     --query "SELECT * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E11EtatBcmReleveDesComptesCorrespondants] WHERE RefBanque = 'BANK01'"
 
-# ou depuis un fichier .sql, ou --table, ou --input (fichier local)
-python -m e11_rdcc.ad_hoc_extraction --config e11_rdcc/config/E11_RDCC.yaml --sql-file mon_extrait.sql --output mon_export.csv
-
-# même outil pour E07 (sortie par défaut : e07_fs/outputs/ad_hoc_extraction_{horodatage}.csv)
-python -m e07_fs.ad_hoc_extraction --config e07_fs/config/E07_FS.yaml \
-    --query "SELECT TOP 100 * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E7EtatBcmFluxSortants]"
-python -m e10_fe.ad_hoc_extraction --config e10_fe/config/E10_FE.yaml \
-    --query "SELECT TOP 100 * FROM [DATAWAREHOUSE_SA_PROD].[dbo].[E10EtatBcmFluxEntrants]"
+# depuis un fichier .sql, ou --table, ou --input pour un fichier local
+python -m e11_rdcc.ad_hoc_extraction --config e11_rdcc/config/E11_RDCC.yaml \
+    --sql-file mon_extrait.sql --output mon_export.csv
 ```
 
-Les réglages de performance d'un chargement (lecture SQL accélérée, reprise sur coupure
-réseau, parallélisme et plafond des appels Claude) et les durées attendues d'un premier
-chargement sont documentés dans
+Disponible pour E07, E10 et E11. Un fichier horodaté est créé à chaque exécution, sauf si
+`--output` fixe un nom précis, auquel cas ce fichier est écrasé. Seules les requêtes de lecture
+sont acceptées — garde-fou contre une requête destructrice collée par erreur.
+
+Les réglages de performance d'un chargement — lecture SQL accélérée, reprise sur coupure réseau,
+parallélisme et plafond des appels au modèle — sont documentés dans
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md#performance-dun-chargement-réglages-communs).
 
-Un nouveau fichier horodaté est créé à chaque exécution (sauf si `--output` fixe un nom précis,
-auquel cas ce fichier est écrasé à chaque relance). Seules les requêtes de lecture (`SELECT` /
-`WITH ... SELECT`) sont acceptées — garde-fou contre une requête destructrice collée par erreur.
+### Notifications
 
-### Notifications email
+Deux adresses suffisent : une qui envoie (`SMTP_USER`), une ou plusieurs qui reçoivent
+(`EMAIL_TO`). La seule contrainte technique vient de Gmail, qui exige un **mot de passe
+d'application** dédié, et non le mot de passe du compte :
 
-Deux adresses suffisent — une qui envoie (`SMTP_USER`), une (ou plusieurs) qui reçoivent
-(`EMAIL_TO`). La seule contrainte technique vient de Gmail : il faut un **mot de passe
-d'application** dédié (pas le mot de passe du compte) :
+1. Sur le compte qui enverra les messages, la validation en deux étapes étant active, ouvrir
+   `myaccount.google.com/apppasswords`.
+2. Si le lien direct ne fonctionne pas : `myaccount.google.com` → **Security** → **2-Step
+   Verification** → en bas de page → **App passwords**.
+3. En créer un, puis reporter le code de 16 caractères dans `SMTP_APP_PASSWORD`.
+4. Renseigner également `SMTP_USER` et `EMAIL_TO`.
 
-1. Sur le compte Gmail qui enverra les emails, avec la validation en 2 étapes déjà active :
-   va directement sur `myaccount.google.com/apppasswords`.
-2. Si le lien direct ne fonctionne pas : `myaccount.google.com` → **Security** → sous
-   "Signing in to Google" → **2-Step Verification** → tout en bas de cette page →
-   **App passwords**.
-3. Crée-en un (nom libre), copie le code de 16 caractères → `SMTP_APP_PASSWORD` dans `.env`.
-4. Renseigne aussi `SMTP_USER` et `EMAIL_TO`.
+Si l'option reste introuvable, il s'agit probablement d'un compte Google Workspace dont
+l'administrateur a désactivé la fonctionnalité : utiliser un compte dédié. Tant que ces variables
+sont vides, les notifications sont ignorées, sans erreur ni blocage.
 
-Si l'option est introuvable même avec le lien direct : c'est probablement un compte Google
-Workspace pro (pas un `@gmail.com` perso) où l'administrateur a désactivé la fonctionnalité —
-utiliser un compte Gmail personnel/dédié à la place. Tant que ces variables sont vides, les
-notifications sont simplement ignorées (aucune erreur, aucun blocage du run).
+### Ordonnancement
 
-### Ordonnancement en production (Windows Task Scheduler)
-
-Voir [scripts/run_pipeline.ps1](scripts/run_pipeline.ps1) (ou son wrapper
-[run_pipeline.bat](run_pipeline.bat)) — lance les 3 pipelines en mode incrémental.
-La **fréquence est définie par le déclencheur du Task Scheduler**, pas par le script :
-quotidienne ou hebdomadaire, les deux fonctionnent sans modification (chaque run traite
-le delta accumulé depuis le dernier run réussi). **Avant la toute première activation du
-job**, lancer manuellement un `--mode initial` par API pour amorcer l'état incrémental
-(voir *État incrémental* ci-dessous).
+Voir [scripts/run_pipeline.ps1](scripts/run_pipeline.ps1), ou son enveloppe
+[run_pipeline.bat](run_pipeline.bat) : il lance les **cinq** pipelines en mode incrémental. La
+fréquence est définie par le déclencheur de l'ordonnanceur, pas par le script — quotidienne ou
+hebdomadaire, les deux fonctionnent sans modification, chaque exécution traitant le delta accumulé
+depuis la dernière exécution réussie. **Avant la première activation**, lancer manuellement un
+`--mode initial` par endpoint pour amorcer l'état incrémental (voir *État incrémental*).
 
 ---
 
-## Outputs
+## Livrables
 
-Chaque run automatisé produit **un classeur Excel** `E11_RDCC_classification.xlsx`
-(voir [docs/FUNCTIONAL.md](docs/FUNCTIONAL.md) pour le détail) :
+Chaque exécution automatisée produit **un classeur Excel** `{API_ID}_classification.xlsx` :
 
 | Feuille | Contenu |
 |---|---|
-| `NomCorrespondant`, `Devise` | Classification : valeur brute → valeur normalisée (OUTLIER inclus). **Cumulative** — construite depuis le référentiel + le cache warm-start, pas depuis les lignes du run, donc jamais amputée des labels déjà connus en mode incrémental |
-| `Anomalies_Numeriques` | Uniquement les lignes en anomalie (les 4 règles de cohérence) — NumCompte, RefBanque, colonnes numériques/date concernées, `dtCr`, règle violée, détail |
-| `Instructions` | **Historique en lecture seule** des corrections manuelles déjà appliquées via `apply_corrections` (`Champ`, `Input`, `Label_Attendu`) — un historique par API, **vide au tout premier run** |
+| Une par champ catégoriel | La mapping table du champ : valeur brute, valeur normalisée, méthode de résolution, `OUTLIER` inclus. **Cumulative** — construite depuis le référentiel et la mémoire des valeurs validées, et non depuis les seules lignes de l'exécution : elle n'est donc jamais amputée des valeurs déjà connues en mode incrémental |
+| `Anomalies_*` | Une feuille par famille de contrôle, limitée aux lignes en anomalie : identifiants, colonnes concernées, date de création, règle violée, détail. Au-delà d'un seuil de lignes, le détail intégral part dans un CSV à côté du classeur |
+| `Instructions` | **Historique en lecture seule** des corrections métier déjà appliquées (`Champ`, `Input`, `Label_Attendu`) — vide à la première exécution |
 
-Pas d'extraction ligne par ligne dans ce classeur (sur demande métier — voir *Extraction ad hoc*
-pour un export complet à la demande). Stocké en local (`e11_rdcc/outputs/`, ou
-`{OUTPUT_BASE}/E11_RDCC/` — nom de l'API en majuscules, sans niveau `outputs/` — si `OUTPUT_BASE`
-renseigné dans `.env`) + SharePoint si configuré (chemin stable, écrasé à chaque run) — source Power BI.
+Le classeur ne contient pas d'extraction ligne par ligne : voir *Extraction sur requête libre* pour
+un export complet à la demande. Il est écrit en local sous `{endpoint}/outputs/`, ou sous
+`{OUTPUT_BASE}/{API_ID}/` si `OUTPUT_BASE` est renseigné, et déposé sur le dépôt distant si
+celui-ci est configuré — chemin stable, écrasé à chaque exécution, et source du rapport Power BI.
 
-En plus du classeur, chaque run génère **un rapport PDF unique** (Markdown → PDF, pure Python,
-`shared/pdf_report.py` + `shared/report_templates.py` + le module `reports.py` de l'API) :
-`Rapport_Qualite_Outliers_{api_id}_{yyyymmdd}.pdf`, deux sections dans le même fichier (saut de
-page entre les deux) — statistiques générales + indicateurs de performance sur l'ensemble de
-l'historique traité, puis synthèse des outliers par champ traité et **détail par champ** (un
-tableau par champ : valeur source, RefBanque, nb d'occurrences). Le nombre de valeurs détaillées
-par champ est plafonné par `reports.top_n_outliers_detail` (YAML, `0` = tout afficher) — la liste
-exhaustive reste dans le classeur Excel. Le PDF est écrit dans un sous-dossier `Rapport/` dédié,
-séparé du classeur. Les deux fichiers (classeur + PDF) sont joints à l'email de notification OK.
+Chaque exécution produit en outre **un rapport PDF** `Rapport_Qualite_Outliers_{api_id}_{date}.pdf`,
+en deux sections : statistiques générales et indicateurs de qualité sur l'ensemble de l'historique
+traité, puis synthèse des outliers par champ et détail par champ — valeur source, banque, nombre
+d'occurrences. Le nombre de valeurs détaillées par champ est plafonné par
+`reports.top_n_outliers_detail`, la liste exhaustive restant dans le classeur. Le PDF est écrit
+dans un sous-dossier `Rapport/` dédié.
 
-Le corps de l'email OK suit un gabarit texte (pas HTML) validé par le Business Analyst : sujet
-`Pipeline {libellé endpoint} : Rapport de qualité et rapport des outliers – {date}` (ex: "E11 –
-RDCC", "E09 – PE" — voir `email.display_name` dans chaque YAML), puis les indicateurs delta de CE
-run (lignes traitées, nouvelles valeurs distinctes/normalisées/outliers, taux de conformité, temps
-d'exécution), puis un rappel du PDF joint pour le détail complet. Le corps de l'email KO ne
-contient **jamais** le texte brut de l'exception ni de traceback — uniquement une catégorie courte
-et non technique (`shared/errors.py::PipelineError.category`), le détail technique restant dans
-les logs. Le rapport de qualité est aussi disponible dans les logs structurés (`logs/{api_id}_{ts}.log`).
+Les deux fichiers sont joints à la notification de fin d'exécution. Son corps suit un gabarit
+texte : objet `Pipeline {libellé endpoint} : Rapport de qualité et rapport des outliers – {date}`,
+puis les indicateurs de l'exécution — lignes traitées, nouvelles valeurs distinctes, normalisées et
+outliers, taux de conformité, temps d'exécution — puis un renvoi au PDF joint. En cas d'échec, le
+corps ne contient **jamais** le texte brut de l'exception : seulement une catégorie courte et non
+technique, le détail restant dans les journaux (`logs/{api_id}_{horodatage}.log`).
 
 ---
 
-## État incrémental (fichier JSON local, pas une table SQL)
+## État incrémental
 
-**Les bases source restent strictement en lecture seule** (aucune écriture/DDL autorisée côté
-métier). L'état incrémental (dernier `dtCr` traité, compteurs cumulatifs d'historique) est donc
-simulé localement, dans `state/{api_id}_run_state.json` (un fichier par API — ex:
-`state/E11_RDCC_run_state.json`, `state/E09_PE_run_state.json` — ou sous `{STATE_DIR}/...` si
-renseigné dans `.env`, même logique qu'`OUTPUT_BASE`). Écriture atomique (fichier temporaire +
-remplacement) pour ne jamais corrompre l'état si le process est interrompu en cours d'écriture.
+**Les tables source restent strictement en lecture seule** : aucune écriture, aucun DDL. L'état
+incrémental — dernière date de création traitée, compteurs cumulatifs — est donc tenu localement,
+dans `state/{api_id}_run_state.json`, un fichier par endpoint, ou sous `{STATE_DIR}` si cette
+variable est renseignée. L'écriture est atomique — fichier temporaire puis remplacement — pour ne
+jamais corrompre l'état si l'exécution est interrompue.
 
-Ce fichier est propre à la machine qui exécute le pipeline — s'il change de serveur, réamorcer
-l'état avec `scripts/seed_state.py` (voir *Ordonnancement* ci-dessus) plutôt que de le copier.
-
----
-
-## Tests
-
-```bash
-pip install -r requirements-dev.txt
-pytest tests/ -v
-```
-
-Tous les tests sont 100% locaux (fichiers temporaires, référentiels/caches isolés) — aucun
-n'accède à la vraie base de données ni à un vrai service externe.
+Ce fichier est propre à la machine qui exécute le pipeline. En cas de changement de serveur,
+réamorcer l'état avec `scripts/seed_state.py` plutôt que de le copier.
