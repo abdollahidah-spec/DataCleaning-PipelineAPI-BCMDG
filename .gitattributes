@@ -1,0 +1,10 @@
+# Outillage interne : versionné, mais exclu des archives produites par
+# `git archive` — ce qui est remis à l'extérieur ne contient donc que le code
+# exécuté et sa documentation.
+#
+#   git archive --format=zip -o livraison.zip HEAD
+#
+tests/               export-ignore
+pytest.ini           export-ignore
+requirements-dev.txt export-ignore
+.gitattributes       export-ignore
